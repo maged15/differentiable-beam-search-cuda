@@ -67,6 +67,13 @@ def _validate_positive_int_dim(value: int, name: str) -> None:
         raise ValueError(f"{name} exceeds INT_MAX")
 
 
+def _validate_eos_token(options: DBSOptions, vocab_size: int) -> None:
+    if options.eos_token < -1:
+        raise ValueError("eos_token must be -1 or non-negative")
+    if options.eos_token >= vocab_size:
+        raise ValueError(f"eos_token={options.eos_token} must be < vocab_size={vocab_size}")
+
+
 def _validate_public_shape(log_probs: torch.Tensor, options: DBSOptions) -> bool:
     """Validate public shape and return True if input is unbatched."""
     _validate_positive_int_dim(options.beam_size, "beam_size")
@@ -76,6 +83,7 @@ def _validate_public_shape(log_probs: torch.Tensor, options: DBSOptions) -> bool
         _validate_positive_int_dim(log_probs.size(2), "V")
         if log_probs.size(1) != options.beam_size:
             raise ValueError(f"beam_size={options.beam_size} must equal log_probs.shape[1]={log_probs.size(1)}")
+        _validate_eos_token(options, log_probs.size(2))
         return True
     if log_probs.dim() == 4:
         _validate_positive_int_dim(log_probs.size(0), "B")
@@ -84,6 +92,7 @@ def _validate_public_shape(log_probs: torch.Tensor, options: DBSOptions) -> bool
         _validate_positive_int_dim(log_probs.size(3), "V")
         if log_probs.size(2) != options.beam_size:
             raise ValueError(f"beam_size={options.beam_size} must equal log_probs.shape[2]={log_probs.size(2)}")
+        _validate_eos_token(options, log_probs.size(3))
         return False
     raise ValueError("log_probs must have shape [T,K,V] or [B,T,K,V]")
 

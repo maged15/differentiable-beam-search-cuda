@@ -220,6 +220,28 @@ static std::tuple<torch::Tensor, torch::Tensor> test_decode_forward_variable(
     return std::make_tuple(tokens, scores);
 }
 
+static int test_decode_forward_status(torch::Tensor log_probs, int64_t beam_size, int64_t eos_token, bool fast_path) {
+    const bool unbatched = validate_cuda_log_probs_public(log_probs, beam_size);
+    c10::cuda::CUDAGuard device_guard(log_probs.device());
+    auto x4 = unbatched ? log_probs.unsqueeze(0) : log_probs;
+    auto x = x4.contiguous();
+    const int B = static_cast<int>(x.size(0));
+    const int T = static_cast<int>(x.size(1));
+    const int K = static_cast<int>(x.size(2));
+    const int V = static_cast<int>(x.size(3));
+    auto tokens = torch::empty({B, T, K}, torch::TensorOptions().device(log_probs.device()).dtype(torch::kInt32));
+    auto scores = torch::empty({B, K}, log_probs.options());
+    const auto stream = at::cuda::getCurrentCUDAStream(log_probs.get_device());
+    if (fast_path) {
+        return dbs_cuda_decode_forward_fast_ex(
+            x.data_ptr<float>(), B, T, K, V, static_cast<int>(eos_token), 0,
+            tokens.data_ptr<int32_t>(), scores.data_ptr<float>(), stream.stream());
+    }
+    return dbs_cuda_decode_forward(
+        x.data_ptr<float>(), B, T, K, V, static_cast<int>(eos_token),
+        tokens.data_ptr<int32_t>(), scores.data_ptr<float>(), stream.stream());
+}
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("final_scores_forward_cuda", &final_scores_forward_cuda, "DBS CUDA final scores forward for [T,K,V] or [B,T,K,V]");
     m.def("final_scores_forward_cuda_exact_kernel", &final_scores_forward_cuda_exact_kernel, "DBS exact custom CUDA kernel final scores forward");
@@ -227,5 +249,6 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("_test_sparse_backward_scatter", &test_sparse_backward_scatter, "Test-only wrapper for DBS CUDA sparse backward scatter");
     m.def("_test_decode_forward_fast_ex", &test_decode_forward_fast_ex, "Test-only wrapper for DBS CUDA fast decode with min_length");
     m.def("_test_decode_forward_variable", &test_decode_forward_variable, "Test-only wrapper for DBS CUDA variable decode");
+    m.def("_test_decode_forward_status", &test_decode_forward_status, "Test-only direct CUDA decode status wrapper");
     m.def("cuda_available", []() { return dbs_cuda_available() != 0; });
 }

@@ -151,6 +151,10 @@ class _DBSFinalScores(torch.autograd.Function):
 
         x = log_probs.contiguous()
         T, _, V = x.shape
+        if options.eos_token < -1:
+            raise ValueError("eos_token must be -1 or non-negative")
+        if options.eos_token >= V:
+            raise ValueError("eos_token must be less than log_probs.shape[2]")
         dbs = _DBSLib(lib_path)
         handle = dbs.lib.dbs_create(options.as_c())
         if not handle:

@@ -58,6 +58,14 @@ def test_rejects_zero_dimensions_and_bad_beam():
     assert y.shape == (1, 2)
 
 
+def test_rejects_eos_token_outside_vocab_before_native_decode():
+    x = torch.log_softmax(torch.randn(3, 2, 8), dim=-1)
+    with pytest.raises(ValueError, match="eos_token"):
+        final_scores(x, DBSOptions(beam_size=2, eos_token=8))
+    with pytest.raises(ValueError, match="eos_token"):
+        final_scores(x, DBSOptions(beam_size=2, eos_token=-2))
+
+
 def test_cpu_unbatched_and_batched_contract_shapes():
     opts = DBSOptions(beam_size=2)
     x3 = torch.randn(3, 2, 16, dtype=torch.float32)

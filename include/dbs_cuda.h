@@ -29,7 +29,12 @@ const char* dbs_cuda_status_string(int status);
 
 /* Real CUDA entry point. Inputs/outputs are device pointers. Tokens shape is
  * [B, T, K]; final_scores shape is [B, K]. The implementation performs hard
- * deterministic beam expansion on device and carries EOS beams forward. */
+ * deterministic beam expansion on device and carries EOS beams forward.
+ *
+ * CUDA C entry points intentionally implement only hard final-score decoding:
+ * no surrogate backward, selected/soft-top-k temperatures, relaxed pool,
+ * GNMT length penalty, token constraints, or non-default CPU decoder shaping
+ * options are accepted here. eos_token must be -1 or within [0, vocab_size). */
 int dbs_cuda_decode_forward(
     const float* device_log_probs,
     int batch_size,
@@ -42,7 +47,9 @@ int dbs_cuda_decode_forward(
     void* cuda_stream);
 
 /* Variable-length batched variant. Optional per-example arrays are device
- * pointers; null arrays use the scalar arguments/defaults. */
+ * pointers; null arrays use the scalar arguments/defaults. Per-example
+ * metadata is validated on device before decode. Dense output slots outside a
+ * per-example beam/step range are initialized to -1 tokens and -Inf scores. */
 
 /* Cooperative CUDA backend. One block decodes one batch example; threads cooperatively
  * scan vocabulary blocks and reduce deterministic top-k candidates in shared memory.

@@ -57,6 +57,16 @@ def test_cuda_sparse_scatter_duplicate_invalid_and_empty_indices():
     torch.testing.assert_close(empty_grad, torch.zeros(3))
 
 
+def test_direct_cuda_decode_rejects_invalid_eos_values():
+    ext = _require_cuda_ext()
+    x = torch.log_softmax(torch.randn(1, 2, 8, device="cuda", dtype=torch.float32), dim=-1)
+    invalid_argument = 2
+    assert ext._test_decode_forward_status(x, 2, -2, False) == invalid_argument
+    assert ext._test_decode_forward_status(x, 2, -2, True) == invalid_argument
+    assert ext._test_decode_forward_status(x, 2, 8, False) == invalid_argument
+    assert ext._test_decode_forward_status(x, 2, 8, True) == invalid_argument
+
+
 def test_cuda_fast_kernel_enforces_min_length_for_eos():
     ext = _require_cuda_ext()
     x_cpu = torch.full((1, 3, 2, 6), -10.0, dtype=torch.float32)
@@ -74,7 +84,52 @@ def test_cuda_fast_kernel_enforces_min_length_for_eos():
     torch.testing.assert_close(scores.detach().cpu()[0], cpu_scores, rtol=1e-5, atol=1e-5)
 
 
-def test_cuda_variable_decode_ignores_out_of_vocab_eos_safely():
+@pytest.mark.parametrize("eos", [-1, 0])
+def test_cuda_equal_score_edge_cases_match_cpu(eos):
+    _require_cuda_ext()
+    x_cpu = torch.full((2, 3, 3, 9), -2.0, dtype=torch.float32)
+    x_cpu[:, :, :, 0] = -0.1
+    x_cpu[:, :, :, 1] = -0.1
+    x_cpu[:, :, :, 2] = -0.1
+    if eos >= 0:
+        x_cpu[:, :, :, eos] = -0.1
+    opts = DBSOptions(beam_size=3, eos_token=eos, validate_inputs=1)
+    cpu_scores = torch.stack([final_scores(x_cpu[b], opts).detach() for b in range(x_cpu.size(0))], dim=0)
+    cuda_scores = final_scores(x_cpu.cuda(), opts).detach().cpu()
+    torch.testing.assert_close(cuda_scores, cpu_scores, rtol=1e-6, atol=1e-6)
+
+
+def test_cuda_equal_score_direct_tokens_are_deterministic():
+    ext = _require_cuda_ext()
+    x_cpu = torch.full((1, 2, 3, 6), -1.0, dtype=torch.float32)
+    tokens, scores = ext._test_decode_forward_fast_ex(x_cpu.cuda(), 3, -1, 0)
+    tokens_cpu = tokens.detach().cpu()
+    assert tokens_cpu[0, 0].tolist() == [0, 1, 2]
+    assert tokens_cpu[0, 1].tolist() == [0, 1, 2]
+    torch.testing.assert_close(scores.detach().cpu()[0], torch.full((3,), -2.0))
+
+
+def test_cuda_eos_carry_tie_prefers_carry_forward_order():
+    ext = _require_cuda_ext()
+    x_cpu = torch.full((1, 2, 2, 5), -4.0, dtype=torch.float32)
+    x_cpu[:, :, :, 0] = 0.0  # EOS ties with carry-forward at step 1.
+    x_cpu[:, :, :, 1] = 0.0
+    tokens, _ = ext._test_decode_forward_fast_ex(x_cpu.cuda(), 2, 0, 0)
+    tokens_cpu = tokens.detach().cpu()
+    assert tokens_cpu[0, 0].tolist() == [0, 1]
+    assert tokens_cpu[0, 1].tolist() == [0, 0]
+
+
+def test_cuda_all_negative_infinity_rows_match_cpu():
+    _require_cuda_ext()
+    x_cpu = torch.full((2, 2, 2, 5), -float("inf"), dtype=torch.float32)
+    opts = DBSOptions(beam_size=2, eos_token=-1, validate_inputs=0)
+    cpu_scores = torch.stack([final_scores(x_cpu[b], opts).detach() for b in range(x_cpu.size(0))], dim=0)
+    cuda_scores = final_scores(x_cpu.cuda(), opts).detach().cpu()
+    torch.testing.assert_close(cuda_scores, cpu_scores, equal_nan=True)
+
+
+def test_cuda_variable_decode_rejects_invalid_per_example_metadata():
     ext = _require_cuda_ext()
     torch.manual_seed(707)
     x_cpu = torch.randn(2, 3, 2, 16, dtype=torch.float32)
@@ -82,13 +137,40 @@ def test_cuda_variable_decode_ignores_out_of_vocab_eos_safely():
     x = x_cpu.cuda()
     steps = torch.tensor([3, 3], device="cuda", dtype=torch.int32)
     beams = torch.tensor([2, 2], device="cuda", dtype=torch.int32)
-    invalid_eos = torch.tensor([999, -1], device="cuda", dtype=torch.int32)
-    no_eos = torch.tensor([-1, -1], device="cuda", dtype=torch.int32)
+    eos = torch.tensor([-1, -1], device="cuda", dtype=torch.int32)
     min_lengths = torch.tensor([0, 0], device="cuda", dtype=torch.int32)
 
-    _, invalid_scores = ext._test_decode_forward_variable(x, steps, beams, invalid_eos, min_lengths)
-    _, no_eos_scores = ext._test_decode_forward_variable(x, steps, beams, no_eos, min_lengths)
-    torch.testing.assert_close(invalid_scores.detach().cpu(), no_eos_scores.detach().cpu(), rtol=1e-5, atol=1e-5)
+    bad_cases = [
+        (torch.tensor([0, 3], device="cuda", dtype=torch.int32), beams, eos, min_lengths),
+        (steps, torch.tensor([0, 2], device="cuda", dtype=torch.int32), eos, min_lengths),
+        (steps, beams, torch.tensor([999, -1], device="cuda", dtype=torch.int32), min_lengths),
+        (steps, beams, torch.tensor([-2, -1], device="cuda", dtype=torch.int32), min_lengths),
+        (steps, beams, eos, torch.tensor([-1, 0], device="cuda", dtype=torch.int32)),
+    ]
+    for bad_steps, bad_beams, bad_eos, bad_min_lengths in bad_cases:
+        with pytest.raises(RuntimeError, match="invalid argument"):
+            ext._test_decode_forward_variable(x, bad_steps, bad_beams, bad_eos, bad_min_lengths)
+
+
+def test_cuda_variable_decode_initializes_ragged_trailing_outputs():
+    ext = _require_cuda_ext()
+    x_cpu = torch.full((2, 3, 2, 8), -3.0, dtype=torch.float32)
+    x_cpu[:, :, :, 0] = -0.1
+    x_cpu[:, :, :, 1] = -0.2
+    x = x_cpu.cuda()
+    steps = torch.tensor([2, 3], device="cuda", dtype=torch.int32)
+    beams = torch.tensor([1, 2], device="cuda", dtype=torch.int32)
+    eos = torch.tensor([-1, -1], device="cuda", dtype=torch.int32)
+    min_lengths = torch.tensor([0, 0], device="cuda", dtype=torch.int32)
+
+    tokens, scores = ext._test_decode_forward_variable(x, steps, beams, eos, min_lengths)
+    tokens_cpu = tokens.detach().cpu()
+    scores_cpu = scores.detach().cpu()
+    assert torch.equal(tokens_cpu[0, :2, 1], torch.full((2,), -1, dtype=torch.int32))
+    assert torch.equal(tokens_cpu[0, 2], torch.full((2,), -1, dtype=torch.int32))
+    assert scores_cpu[0, 1].item() == -float("inf")
+    assert torch.isfinite(scores_cpu[0, 0])
+    assert torch.isfinite(scores_cpu[1]).all()
 
 
 @pytest.mark.skipif(os.environ.get("DBS_CUDA_LARGE_SCATTER_TEST") != "1", reason="large scatter grid-stride test is release-hardware gated")
