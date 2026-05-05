@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.0rc9
+
+- Fixed the AVX-512 exponential range-reduction constant used by sigmoid/softmax-style gradient helpers.
+- Added internal scalar-vs-AVX-512 parity coverage for exp, selected softmax weights, and relaxed top-k weights.
+- Enabled GCC target-attribute builds for AVX2/FMA and SSE4.2 helper paths.
+- Made CUDA sparse backward scatter use a capped grid-stride launch to avoid grid-size truncation for large `nnz`.
+- Aligned shared-library `SOVERSION` with C ABI `10` and expanded metadata checks for ABI/SOVERSION/license consistency.
+- Added package metadata for MIT license/readme and documented the ctypes wrapper's shared-library requirement.
+
 ## 1.0.0rc8
 
 - Fixed CUDA public API shape handling at the native extension boundary, including direct native CUDA calls with `[T,K,V]`.

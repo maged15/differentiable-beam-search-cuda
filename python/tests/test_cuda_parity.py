@@ -147,6 +147,13 @@ def test_cuda_public_api_rejects_invalid_shapes_and_options():
         final_scores(x, DBSOptions(beam_size=2, min_length=1))
 
 
+def test_cuda_rejects_beam_size_above_backend_limit():
+    ext = _require_cuda_ext()
+    x = torch.randn(1, 65, 2, device="cuda", dtype=torch.float32)
+    with pytest.raises(RuntimeError, match="beam_size exceeds CUDA backend maximum"):
+        ext.final_scores_forward_cuda(x, 65, -1)
+
+
 def test_cuda_public_api_accepts_non_contiguous_and_half_inputs():
     _require_cuda_ext()
     torch.manual_seed(314)

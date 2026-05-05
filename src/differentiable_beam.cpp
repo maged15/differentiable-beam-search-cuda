@@ -48,7 +48,7 @@
 #define DBS_AVX512_TARGET
 #endif
 
-#if DBS_X86 && defined(__clang__)
+#if DBS_X86 && (defined(__GNUC__) || defined(__clang__))
 #define DBS_CAN_COMPILE_AVX2 1
 #define DBS_AVX2_TARGET __attribute__((target("avx2,fma")))
 #define DBS_CAN_COMPILE_SSE42 1
@@ -635,7 +635,7 @@ DBS_AVX512_TARGET static inline __m512 exp512_ps(__m512 x) {
     const __m512 exp_hi = _mm512_set1_ps(88.3762626647949f);
     const __m512 exp_lo = _mm512_set1_ps(-88.3762626647949f);
     const __m512 log2ef = _mm512_set1_ps(1.44269504088896341f);
-    const __m512 ln2f = _mm512_set1_ps(1.0931471805599453f);
+    const __m512 ln2f = _mm512_set1_ps(0.6931471805599453f);
 
     x = _mm512_min_ps(x, exp_hi);
     x = _mm512_max_ps(x, exp_lo);

@@ -11,6 +11,8 @@ option(DBS_ENABLE_MSAN "Enable MemorySanitizer with Clang" OFF)
 option(DBS_ENABLE_CUDA "Build CUDA backend target when CUDA is available" OFF)
 option(DBS_BUILD_HARDWARE_GATES "Expose hardware validation helper targets" ON)
 
+set(DBS_ABI_VERSION 10 CACHE STRING "Public C ABI version from include/dbs.h")
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if(MSVC)
@@ -57,7 +59,7 @@ endif()
 if(UNIX AND NOT APPLE)
   target_link_options(dbs PRIVATE "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/cmake/dbs.map")
 endif()
-set_target_properties(dbs PROPERTIES VERSION ${PROJECT_VERSION} SOVERSION 0)
+set_target_properties(dbs PROPERTIES VERSION ${PROJECT_VERSION} SOVERSION ${DBS_ABI_VERSION})
 
 if(DBS_ENABLE_CUDA)
   enable_language(CUDA)
@@ -73,6 +75,9 @@ else()
 endif()
 
 add_library(dbs::dbs_cuda ALIAS dbs_cuda)
+if(DBS_BUILD_SHARED)
+  set_target_properties(dbs_cuda PROPERTIES VERSION ${PROJECT_VERSION} SOVERSION ${DBS_ABI_VERSION})
+endif()
 
 target_include_directories(dbs_cuda PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -117,6 +122,9 @@ if(DBS_BUILD_TESTS)
   add_executable(dbs_tests tests/dbs_tests.cpp)
   target_link_libraries(dbs_tests PRIVATE dbs)
   add_test(NAME dbs_tests COMMAND dbs_tests)
+
+  add_executable(dbs_simd_internal_tests tests/simd_internal_tests.cpp)
+  add_test(NAME dbs_simd_internal_tests COMMAND dbs_simd_internal_tests)
 endif()
 
 if(DBS_BUILD_BENCHMARKS)

@@ -4,7 +4,7 @@ The Python extension is packaged as `dbs-torch`.
 
 ## CPU wheel
 
-The default build produces a CPU wheel with the native C++/PyTorch extension:
+The default build produces a CPU wheel with the native C++/PyTorch extension. This extension is self-contained because it compiles the C ABI implementation directly into `dbs_torch_ext`.
 
 ```bash
 python -m pip install --upgrade build wheel setuptools packaging
@@ -29,3 +29,7 @@ The public Python API accepts both unbatched and batched tensors on CPU and CUDA
 - `[B,T,K,V] -> [B,K]`
 
 CUDA autograd backward is not implemented. CUDA tensors are forward-only; CPU tensors support the sparse surrogate backward.
+
+## ctypes wrapper
+
+`python/torch_dbs.py` and `python/jax_dbs.py` are ctypes validation wrappers. They load `libdbs.so` from `DBS_LIBRARY` or the platform loader path, so pip users should prefer `torch_dbs_extension` unless they also install or build the shared C library and configure the loader path explicitly.

@@ -1,6 +1,6 @@
 # Production readiness gate
 
-v1.0.0rc8 is designed to fail closed. A production release requires all of the following evidence to be true in `validation/production_gate_manifest.required.json` and backed by logs:
+v1.0.0rc9 is designed to fail closed. A production release requires all of the following evidence to be true in `validation/production_gate_manifest.required.json` and backed by logs:
 
 - CUDA parity on real NVIDIA hardware for forward decode, EOS, constraints, variable batch lengths, sparse scatter, FP16/BF16, deterministic ties, and golden outputs.
 - CPU and CUDA PyTorch wheels built and tested with native autograd and an end-to-end training loop.

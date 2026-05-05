@@ -19,6 +19,7 @@ static bool validate_cuda_log_probs_public(const torch::Tensor& log_probs, int64
     TORCH_CHECK(log_probs.dtype() == torch::kFloat32, "CUDA op currently requires float32");
     TORCH_CHECK(log_probs.dim() == 3 || log_probs.dim() == 4, "expected [T,K,V] or [B,T,K,V]");
     TORCH_CHECK(beam_size > 0 && beam_size <= static_cast<int64_t>(std::numeric_limits<int>::max()), "beam_size must be in [1, INT_MAX]");
+    TORCH_CHECK(beam_size <= DBS_CUDA_MAX_BEAM, "beam_size exceeds CUDA backend maximum");
 
     if (log_probs.dim() == 3) {
         validate_int_bound(log_probs.size(0), "T");

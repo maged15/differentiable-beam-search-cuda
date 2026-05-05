@@ -3,6 +3,7 @@
 
 #include <cuda_runtime.h>
 #include <math_constants.h>
+#include <algorithm>
 #include <cstdlib>
 
 #ifndef DBS_CUDA_MAX_BEAM
@@ -112,10 +113,11 @@ __global__ void dbs_forward_kernel(
 }
 
 __global__ void dbs_sparse_scatter_kernel(const int64_t* idx, const float* val, int64_t nnz, float* grad, int64_t grad_count) {
-    const int64_t i = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
-    if (i >= nnz) return;
-    const int64_t j = idx[i];
-    if (j >= 0 && j < grad_count) atomicAdd(grad + j, val[i]);
+    const int64_t stride = static_cast<int64_t>(blockDim.x) * static_cast<int64_t>(gridDim.x);
+    for (int64_t i = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x; i < nnz; i += stride) {
+        const int64_t j = idx[i];
+        if (j >= 0 && j < grad_count) atomicAdd(grad + j, val[i]);
+    }
 }
 
 static bool dbs_cuda_sync_checks_enabled() {
@@ -197,16 +199,16 @@ extern "C" int dbs_cuda_sparse_backward_scatter(
     if (nnz == 0) return DBS_CUDA_STATUS_OK;
     cudaStream_t stream = reinterpret_cast<cudaStream_t>(cuda_stream);
     const int threads = 256;
-    const int blocks = static_cast<int>((nnz + threads - 1) / threads);
+    constexpr int max_portable_grid_x = 65535;
+    const int64_t needed_blocks = (nnz + threads - 1) / threads;
+    const int blocks = static_cast<int>(std::min<int64_t>(needed_blocks, max_portable_grid_x));
+    if (blocks <= 0) return DBS_CUDA_STATUS_INVALID_ARGUMENT;
     dbs_sparse_scatter_kernel<<<blocks, threads, 0, stream>>>(device_indices, device_values, nnz, device_grad_out, grad_out_count);
     return finish_cuda(cudaPeekAtLastError(), stream);
 }
 
 #ifndef DBS_CUDA_FAST_THREADS
 #define DBS_CUDA_FAST_THREADS 64
-#endif
-#ifndef DBS_CUDA_FAST_MAX_BEAM
-#define DBS_CUDA_FAST_MAX_BEAM 32
 #endif
 
 static __device__ __forceinline__ void insert_local_candidate(

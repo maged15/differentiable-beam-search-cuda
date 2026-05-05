@@ -41,6 +41,9 @@ if build_cuda:
 setup(
     name="dbs-torch",
     version=version,
+    license="MIT",
+    long_description=(ROOT / "README.md").read_text(),
+    long_description_content_type="text/markdown",
     py_modules=["torch_dbs", "torch_dbs_extension", "jax_dbs"],
     package_dir={"": "python"},
     ext_modules=ext_modules,

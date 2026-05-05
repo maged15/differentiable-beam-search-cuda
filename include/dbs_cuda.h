@@ -12,6 +12,14 @@ extern "C" {
 #define DBS_CUDA_STATUS_INVALID_ARGUMENT 2
 #define DBS_CUDA_STATUS_LAUNCH_FAILED 3
 
+#ifndef DBS_CUDA_MAX_BEAM
+#define DBS_CUDA_MAX_BEAM 64
+#endif
+
+#ifndef DBS_CUDA_FAST_MAX_BEAM
+#define DBS_CUDA_FAST_MAX_BEAM 32
+#endif
+
 int dbs_cuda_available(void);
 const char* dbs_cuda_status_string(int status);
 

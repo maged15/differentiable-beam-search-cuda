@@ -1,4 +1,4 @@
-# Differentiable Beam Search (DBS) v1.0.0rc8
+# Differentiable Beam Search (DBS) v1.0.0rc9
 
 This package is a release-candidate research library for hard beam search with sparse surrogate gradients. The public PyTorch API is CPU-autograd/CUDA-forward: CUDA tensors are forward-only; CPU tensors support surrogate backward, while CUDA tensors currently support forward/parity validation only. v1.0 adds hardware validation gates, allocator/reproducibility counters, an optional CUDA fast-kernel path, optional CUDA PyTorch extension source, ABI symbol checks, and clearer release criteria.
 
@@ -8,13 +8,18 @@ Production status: not production-certified until `scripts/run_hardware_validati
 
 `dbs` is a C++17 beam-search decoder with deterministic hard beam output and sparse-first surrogate gradients. The forward pass still uses hard top-k beam selection, so the discrete operation is not exactly differentiable; backward computes an explicit surrogate gradient over selected beams and a relaxed candidate pool.
 
-## What changed in 1.0.0rc8
+## What changed in 1.0.0rc9
 
+- Fixed the AVX-512 exponential range-reduction constant used by sigmoid/softmax-style gradient helpers.
+- Added internal scalar-vs-AVX-512 parity tests for exp, selected softmax weights, and relaxed top-k weights.
+- Enabled GCC target-attribute builds for AVX2/FMA and SSE4.2 helper paths.
+- Capped CUDA sparse scatter launches with a grid-stride loop to avoid int grid overflow on large sparse gradients.
+- Aligned shared-library `SOVERSION` with C ABI `10`, and expanded the metadata gate to check ABI/SOVERSION/license consistency.
 - CUDA unbatched `[T,K,V]` inputs are normalized in the public Python wrapper before calling the rank-4 native CUDA extension.
 - CUDA kernels support debug launch synchronization with `DBS_CUDA_SYNC_CHECK=1` or `DBS_CUDA_DEBUG_SYNC=1`.
 - Non-CUDA CMake builds now export a stable `dbs::dbs_cuda` stub target.
 - License text is consistently MIT.
-- Version metadata uses `VERSION` as the source of truth for Python packaging; CMake remains `1.0.0` and C ABI remains `10`.
+- Version metadata uses `VERSION` as the source of truth for Python packaging; CMake library `VERSION` remains `1.0.0` and shared-library `SOVERSION` follows C ABI `10`.
 - Versioning docs explicitly separate Python package prerelease, CMake library version, and C ABI version.
 
 - Public tests now treat `[B,T,K,V]` with `B=1` as valid and reject only true beam-size/rank/dimension errors.
@@ -243,9 +248,9 @@ See [`docs/PACKAGING.md`](docs/PACKAGING.md) for CPU/CUDA wheel build modes and 
 
 ## Versioning and ABI
 
-Python package version: `1.0.0rc8`. CMake/shared-library version: `1.0.0`. C ABI version: `10` (`DBS_ABI_VERSION`).
+Python package version: `1.0.0rc9`. CMake library `VERSION`: `1.0.0`. Shared-library `SOVERSION` and C ABI version: `10` (`DBS_ABI_VERSION`).
 
-The Python package uses PEP 440 prerelease versions. CMake intentionally uses numeric semantic versions because CMake package-version files do not support PEP 440 suffixes. Treat `DBS_ABI_VERSION` as the binary compatibility contract.
+The Python package uses PEP 440 prerelease versions. CMake intentionally uses numeric semantic versions because CMake package-version files do not support PEP 440 suffixes. Treat `DBS_ABI_VERSION` as the binary compatibility contract and keep it aligned with shared-library `SOVERSION`.
 
 ## License
 

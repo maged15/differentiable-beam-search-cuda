@@ -6,6 +6,8 @@ build-backend = "setuptools.build_meta"
 name = "dbs-torch"
 dynamic = ["version"]
 description = "CPU-autograd and CUDA-forward extension for sparse-surrogate differentiable beam search"
+readme = "README.md"
+license = {file = "LICENSE"}
 requires-python = ">=3.9"
 dependencies = ["torch"]
 
