@@ -134,7 +134,8 @@ public:
         return static_cast<T*>(p);
     }
 
-    void deallocate(T* p, std::size_t) noexcept {
+    void deallocate(T* p, std::size_t n) noexcept {
+        g_allocator_bytes.fetch_sub(static_cast<int64_t>(n * sizeof(T)), std::memory_order_relaxed);
 #if defined(_MSC_VER)
         _aligned_free(p);
 #else
@@ -294,7 +295,7 @@ static inline bool candidate_better(const Candidate& a, const Candidate& b) noex
     if (a.parent != b.parent) return a.parent < b.parent;
     if (a.token != b.token) return a.token < b.token;
     if (a.length != b.length) return a.length < b.length;
-    return a.from_logprob < b.from_logprob;
+    return a.from_logprob > b.from_logprob;
 }
 
 
@@ -1021,6 +1022,67 @@ DBS_AVX2_TARGET void softmax_selected(const float* scores, float* out, int n, fl
     }
     for (; i < n; ++i) out[i] *= inv_sum;
 }
+
+DBS_AVX2_TARGET void scan_parent_row(
+    const float* row,
+    float parent_raw,
+    int parent_length,
+    int parent,
+    int vocab_size,
+    Candidate* top,
+    int top_count,
+    int vocab_block,
+    float length_penalty_alpha,
+    const uint8_t* banned_tokens,
+    int forced_token,
+    int eos_token,
+    int min_length
+) {
+    if (banned_tokens || forced_token >= 0 || (eos_token >= 0 && parent_length + 1 < min_length)) {
+        scan_parent_row_scalar(row, parent_raw, parent_length, parent, vocab_size, top, top_count, vocab_block, length_penalty_alpha, banned_tokens, forced_token, eos_token, min_length);
+        return;
+    }
+    const int new_len = parent_length + 1;
+    const float inv_penalty = 1.0f / gnmt_length_penalty(new_len, length_penalty_alpha);
+
+    const __m256 parent_vec = _mm256_set1_ps(parent_raw);
+    const __m256 scale_vec = _mm256_set1_ps(inv_penalty);
+
+    for (int base = 0; base < vocab_size; base += vocab_block) {
+        const int end = std::min(vocab_size, base + vocab_block);
+        int v = base;
+
+        for (; v + 7 < end; v += 8) {
+            const __m256 lp = _mm256_loadu_ps(row + v);
+            const __m256 raw_vec = _mm256_add_ps(lp, parent_vec);
+            const __m256 rank_vec = _mm256_mul_ps(raw_vec, scale_vec);
+
+            const float threshold = top[top_count - 1].score;
+            const int mask = _mm256_movemask_ps(_mm256_cmp_ps(rank_vec, _mm256_set1_ps(threshold), _CMP_GT_OS));
+
+            if (mask) {
+                alignas(32) float rank_tmp[8];
+                alignas(32) float raw_tmp[8];
+                _mm256_store_ps(rank_tmp, rank_vec);
+                _mm256_store_ps(raw_tmp, raw_vec);
+                int m = mask;
+                while (m) {
+                    const int lane = __builtin_ctz(m);
+                    insert_topk(top, top_count, Candidate{rank_tmp[lane], raw_tmp[lane], parent, v + lane, new_len, 1});
+                    m &= m - 1;
+                }
+            }
+        }
+
+        for (; v < end; ++v) {
+            const float lp = row[v];
+            if (!std::isfinite(lp)) continue;
+            const float raw = parent_raw + lp;
+            const float rank = raw * inv_penalty;
+            insert_topk(top, top_count, Candidate{rank, raw, parent, v, new_len, 1});
+        }
+    }
+}
 }
 #endif
 
@@ -1654,19 +1716,21 @@ private:
 #if DBS_CAN_COMPILE_AVX512
         if (kernel_path_enabled(KernelPath::AVX512) && runtime_has_avx512()) {
             avx512::scan_parent_row(
-                row,
-                parent_raw,
-                parent_length,
-                parent,
-                vocab_size,
-                top,
-                top_count,
-                opt_.vocab_block,
-                opt_.length_penalty_alpha,
-                banned_tokens,
-                forced_token,
-                opt_.eos_token,
-                min_length
+                row, parent_raw, parent_length, parent,
+                vocab_size, top, top_count, opt_.vocab_block,
+                opt_.length_penalty_alpha, banned_tokens, forced_token,
+                opt_.eos_token, min_length
+            );
+            return;
+        }
+#endif
+#if DBS_CAN_COMPILE_AVX2
+        if (kernel_path_enabled(KernelPath::AVX2) && runtime_has_avx2()) {
+            avx2::scan_parent_row(
+                row, parent_raw, parent_length, parent,
+                vocab_size, top, top_count, opt_.vocab_block,
+                opt_.length_penalty_alpha, banned_tokens, forced_token,
+                opt_.eos_token, min_length
             );
             return;
         }
@@ -1762,19 +1826,15 @@ private:
             if (e.index == cur) {
                 sum += e.value;
             } else {
-                if (sum != 0.0f) {
-                    out.sparse_logprob_indices.push_back(cur);
-                    out.sparse_logprob_values.push_back(sum);
-                }
+                out.sparse_logprob_indices.push_back(cur);
+                out.sparse_logprob_values.push_back(sum);
                 cur = e.index;
                 sum = e.value;
             }
         }
 
-        if (sum != 0.0f) {
-            out.sparse_logprob_indices.push_back(cur);
-            out.sparse_logprob_values.push_back(sum);
-        }
+        out.sparse_logprob_indices.push_back(cur);
+        out.sparse_logprob_values.push_back(sum);
     }
 
     void backward_selected(
@@ -2046,7 +2106,7 @@ private:
                 auto it = std::find(seq.begin(), seq.end(), r.eos_token);
 
                 if (it != seq.end()) {
-                    seq.erase(it + 1, seq.end());
+                    seq.erase(it, seq.end());
                 }
             }
 

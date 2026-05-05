@@ -81,7 +81,7 @@ __global__ void dbs_forward_kernel(
                 }
                 continue;
             }
-            const int base = (((b * steps + t) * beam_size + parent) * vocab_size);
+            const int64_t base = ((static_cast<int64_t>(b) * steps + t) * beam_size + parent) * vocab_size;
             for (int v = 0; v < vocab_size; ++v) {
                 if (eos >= 0 && v == eos && prev_lengths[parent] + 1 < min_len) continue;
                 const float lp = log_probs[base + v];
@@ -104,7 +104,7 @@ __global__ void dbs_forward_kernel(
             next_scores[k] = best_scores[k];
             next_lengths[k] = best_length[k];
             ended_next[k] = best_ended[k];
-            tokens[(b * steps + t) * beam_size + k] = best_token[k];
+            tokens[(b * steps + t) * beam_size + k] = (best_token[k] == 2147483647) ? -1 : best_token[k];
         }
         for (int k = 0; k < K; ++k) { prev_scores[k] = next_scores[k]; prev_lengths[k] = next_lengths[k]; ended[k] = ended_next[k]; }
     }
@@ -164,6 +164,7 @@ extern "C" int dbs_cuda_decode_forward(
     float* device_final_scores,
     void* cuda_stream) {
     if (!device_log_probs || !device_tokens || !device_final_scores || batch_size <= 0 || steps <= 0 || beam_size <= 0 || beam_size > DBS_CUDA_MAX_BEAM || vocab_size <= 0) return DBS_CUDA_STATUS_INVALID_ARGUMENT;
+    if (eos_token >= vocab_size) return DBS_CUDA_STATUS_INVALID_ARGUMENT;
     cudaStream_t stream = reinterpret_cast<cudaStream_t>(cuda_stream);
     dbs_forward_kernel<<<batch_size, 1, 0, stream>>>(device_log_probs, batch_size, steps, beam_size, vocab_size, eos_token, nullptr, nullptr, nullptr, nullptr, device_tokens, device_final_scores);
     return finish_cuda(cudaPeekAtLastError(), stream);
@@ -184,7 +185,9 @@ extern "C" int dbs_cuda_decode_forward_variable(
     void* cuda_stream) {
     if (!device_log_probs || !device_tokens || !device_final_scores || batch_size <= 0 || max_steps <= 0 || max_beam_size <= 0 || max_beam_size > DBS_CUDA_MAX_BEAM || vocab_size <= 0) return DBS_CUDA_STATUS_INVALID_ARGUMENT;
     cudaStream_t stream = reinterpret_cast<cudaStream_t>(cuda_stream);
-    dbs_forward_kernel<<<batch_size, 1, 0, stream>>>(device_log_probs, batch_size, max_steps, max_beam_size, vocab_size, -1, device_steps_per_example, device_beam_sizes_per_example, device_eos_tokens_per_example, device_min_lengths_per_example, device_tokens, device_final_scores);
+    dbs_forward_kernel<<<batch_size, 1, 0, stream>>>(device_log_probs, batch_size, max_steps, max_beam_size, vocab_size, -1,
+        device_steps_per_example, device_beam_sizes_per_example, device_eos_tokens_per_example, device_min_lengths_per_example,
+        device_tokens, device_final_scores);
     return finish_cuda(cudaPeekAtLastError(), stream);
 }
 
@@ -292,10 +295,13 @@ __global__ void dbs_forward_fast_kernel(
             const float ps = prev_scores[parent];
             if (!isfinite(ps)) continue;
             if (eos_token >= 0 && prev_ended[parent]) {
+                // Only thread 0 inserts the EOS carry-forward candidate. This is safe because
+                // thread 0's local list is merged into the global best by the __syncthreads
+                // reduction below before any thread reads it, preventing double-counting.
                 if (tid == 0) insert_local_candidate(local_scores, local_parents, local_tokens, local_lengths, local_ended, K, ps, parent, eos_token, prev_lengths[parent], 1);
                 continue;
             }
-            const int base = (((b * steps + t) * K + parent) * vocab_size);
+            const int64_t base = ((static_cast<int64_t>(b) * steps + t) * K + parent) * vocab_size;
             for (int v = tid; v < vocab_size; v += blockDim.x) {
                 const float lp = log_probs[base + v];
                 if (!isfinite(lp)) continue;
@@ -338,7 +344,7 @@ __global__ void dbs_forward_fast_kernel(
                 prev_scores[i] = best_scores[i];
                 prev_lengths[i] = best_lengths[i];
                 prev_ended[i] = best_ended[i];
-                tokens_out[(b * steps + t) * K + i] = best_tokens[i];
+                tokens_out[(b * steps + t) * K + i] = (best_tokens[i] == 2147483647) ? -1 : best_tokens[i];
             }
         }
         __syncthreads();
@@ -358,6 +364,7 @@ extern "C" int dbs_cuda_decode_forward_fast(
     float* device_final_scores,
     void* cuda_stream) {
     if (!device_log_probs || !device_tokens || !device_final_scores || batch_size <= 0 || steps <= 0 || beam_size <= 0 || vocab_size <= 0) return DBS_CUDA_STATUS_INVALID_ARGUMENT;
+    if (eos_token >= vocab_size) return DBS_CUDA_STATUS_INVALID_ARGUMENT;
     if (beam_size > DBS_CUDA_FAST_MAX_BEAM) {
         return dbs_cuda_decode_forward(device_log_probs, batch_size, steps, beam_size, vocab_size, eos_token, device_tokens, device_final_scores, cuda_stream);
     }
