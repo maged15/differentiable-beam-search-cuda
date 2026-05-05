@@ -124,6 +124,7 @@ if(DBS_BUILD_TESTS)
   add_test(NAME dbs_tests COMMAND dbs_tests)
 
   add_executable(dbs_simd_internal_tests tests/simd_internal_tests.cpp)
+  target_compile_definitions(dbs_simd_internal_tests PRIVATE DBS_STATIC)
   add_test(NAME dbs_simd_internal_tests COMMAND dbs_simd_internal_tests)
 endif()
 

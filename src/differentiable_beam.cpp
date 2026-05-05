@@ -68,10 +68,14 @@
 
 #define DBS_ABI_VERSION 10
 
-#if defined(_WIN32) && defined(DBS_BUILD_SHARED)
+#if defined(_WIN32) && defined(DBS_STATIC)
+#define DBS_EXPORT
+#elif defined(_WIN32) && defined(DBS_BUILD_SHARED) && defined(DBS_COMPILING_LIBRARY)
 #define DBS_EXPORT __declspec(dllexport)
-#elif defined(_WIN32)
+#elif defined(_WIN32) && defined(DBS_BUILD_SHARED)
 #define DBS_EXPORT __declspec(dllimport)
+#elif defined(_WIN32)
+#define DBS_EXPORT
 #elif defined(__GNUC__) || defined(__clang__)
 #define DBS_EXPORT __attribute__((visibility("default")))
 #else
@@ -1472,7 +1476,7 @@ public:
             std::fill(next_lengths.begin(), next_lengths.end(), 0);
 
             ended_prev.swap(ended_next);
-            std::fill(ended_next.begin(), ended_next.end(), 0);
+            std::fill(ended_next.begin(), ended_next.end(), uint8_t{0});
 
             prev_sequences.swap(next_sequences);
             for (auto& seq : next_sequences) seq.clear();
