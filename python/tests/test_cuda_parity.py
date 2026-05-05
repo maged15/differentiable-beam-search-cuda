@@ -44,10 +44,10 @@ def test_cuda_sparse_scatter_module_available():
     assert ext.cuda_available()
 
 
-def test_cuda_sparse_scatter_duplicate_invalid_and_empty_indices():
+def test_cuda_sparse_scatter_duplicate_and_empty_indices():
     ext = _require_cuda_ext()
-    indices = torch.tensor([0, 1, 1, -1, 4, 99], device="cuda", dtype=torch.int64)
-    values = torch.tensor([1.0, 2.0, 3.0, 7.0, 5.0, 11.0], device="cuda", dtype=torch.float32)
+    indices = torch.tensor([0, 1, 1, 4], device="cuda", dtype=torch.int64)
+    values = torch.tensor([1.0, 2.0, 3.0, 5.0], device="cuda", dtype=torch.float32)
     grad = ext._test_sparse_backward_scatter(indices, values, 5).detach().cpu()
     torch.testing.assert_close(grad, torch.tensor([1.0, 5.0, 0.0, 0.0, 5.0]))
 
@@ -55,6 +55,19 @@ def test_cuda_sparse_scatter_duplicate_invalid_and_empty_indices():
     empty_values = torch.empty((0,), device="cuda", dtype=torch.float32)
     empty_grad = ext._test_sparse_backward_scatter(empty_indices, empty_values, 3).detach().cpu()
     torch.testing.assert_close(empty_grad, torch.zeros(3))
+
+
+def test_cuda_sparse_scatter_rejects_invalid_indices():
+    ext = _require_cuda_ext()
+    values = torch.tensor([1.0, 2.0], device="cuda", dtype=torch.float32)
+
+    negative = torch.tensor([0, -1], device="cuda", dtype=torch.int64)
+    with pytest.raises(RuntimeError, match="invalid argument"):
+        ext._test_sparse_backward_scatter(negative, values, 3)
+
+    too_large = torch.tensor([0, 3], device="cuda", dtype=torch.int64)
+    with pytest.raises(RuntimeError, match="invalid argument"):
+        ext._test_sparse_backward_scatter(too_large, values, 3)
 
 
 def test_direct_cuda_decode_rejects_invalid_eos_values():

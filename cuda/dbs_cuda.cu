@@ -11,7 +11,13 @@
 #define DBS_CUDA_MAX_BEAM 64
 #endif
 
+#ifndef DBS_CUDA_FAST_THREADS
+#define DBS_CUDA_FAST_THREADS 64
+#endif
+
 static constexpr int DBS_CUDA_NO_TOKEN_SENTINEL = INT_MAX;
+static_assert(DBS_CUDA_FAST_THREADS > 0, "DBS_CUDA_FAST_THREADS must be positive");
+static_assert(DBS_CUDA_FAST_THREADS <= 1024, "DBS_CUDA_FAST_THREADS must fit in one CUDA block");
 
 static __device__ __forceinline__ bool better_candidate(
     float score,
@@ -184,10 +190,25 @@ __global__ void dbs_sparse_scatter_kernel(const int64_t* idx, const float* val, 
     }
 }
 
+__global__ void dbs_validate_sparse_indices_kernel(const int64_t* idx, int64_t nnz, int64_t grad_count, int* status) {
+    const int64_t stride = static_cast<int64_t>(blockDim.x) * static_cast<int64_t>(gridDim.x);
+    for (int64_t i = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x; i < nnz; i += stride) {
+        const int64_t j = idx[i];
+        if (j < 0 || j >= grad_count) {
+            atomicCAS(status, DBS_CUDA_STATUS_OK, DBS_CUDA_STATUS_INVALID_ARGUMENT);
+        }
+    }
+}
+
+static bool dbs_cuda_async_checks_enabled() {
+    const char* async_check = std::getenv("DBS_CUDA_ASYNC");
+    return async_check && async_check[0] == '1';
+}
+
 static bool dbs_cuda_sync_checks_enabled() {
     const char* sync_check = std::getenv("DBS_CUDA_SYNC_CHECK");
     const char* debug_sync = std::getenv("DBS_CUDA_DEBUG_SYNC");
-    return (sync_check && sync_check[0] == '1') || (debug_sync && debug_sync[0] == '1');
+    return !dbs_cuda_async_checks_enabled() || (sync_check && sync_check[0] == '1') || (debug_sync && debug_sync[0] == '1');
 }
 
 static int finish_cuda(cudaError_t err, cudaStream_t stream) {
@@ -248,6 +269,40 @@ static int validate_variable_metadata_on_device(
             device_min_lengths_per_example,
             device_status);
         err = cudaPeekAtLastError();
+    }
+
+    int host_status = DBS_CUDA_STATUS_LAUNCH_FAILED;
+    if (err == cudaSuccess) {
+        err = cudaMemcpyAsync(&host_status, device_status, sizeof(int), cudaMemcpyDeviceToHost, stream);
+    }
+    if (err == cudaSuccess) {
+        err = cudaStreamSynchronize(stream);
+    }
+    cudaFree(device_status);
+    if (err != cudaSuccess) return DBS_CUDA_STATUS_LAUNCH_FAILED;
+    return host_status == DBS_CUDA_STATUS_OK ? DBS_CUDA_STATUS_OK : DBS_CUDA_STATUS_INVALID_ARGUMENT;
+}
+
+static int validate_sparse_indices_on_device(
+    const int64_t* device_indices,
+    int64_t nnz,
+    int64_t grad_out_count,
+    cudaStream_t stream) {
+    int* device_status = nullptr;
+    cudaError_t err = cudaMalloc(&device_status, sizeof(int));
+    if (err != cudaSuccess) return DBS_CUDA_STATUS_LAUNCH_FAILED;
+    err = cudaMemsetAsync(device_status, DBS_CUDA_STATUS_OK, sizeof(int), stream);
+    if (err == cudaSuccess) {
+        const int threads = 256;
+        constexpr int max_portable_grid_x = 65535;
+        const int64_t needed_blocks = (nnz + threads - 1) / threads;
+        const int blocks = static_cast<int>(std::min<int64_t>(needed_blocks, max_portable_grid_x));
+        if (blocks <= 0) {
+            err = cudaErrorInvalidValue;
+        } else {
+            dbs_validate_sparse_indices_kernel<<<blocks, threads, 0, stream>>>(device_indices, nnz, grad_out_count, device_status);
+            err = cudaPeekAtLastError();
+        }
     }
 
     int host_status = DBS_CUDA_STATUS_LAUNCH_FAILED;
@@ -339,6 +394,8 @@ extern "C" int dbs_cuda_sparse_backward_scatter(
     if (nnz == 0) return DBS_CUDA_STATUS_OK;
     if (!device_indices || !device_values) return DBS_CUDA_STATUS_INVALID_ARGUMENT;
     cudaStream_t stream = reinterpret_cast<cudaStream_t>(cuda_stream);
+    int rc = validate_sparse_indices_on_device(device_indices, nnz, grad_out_count, stream);
+    if (rc != DBS_CUDA_STATUS_OK) return rc;
     const int threads = 256;
     constexpr int max_portable_grid_x = 65535;
     const int64_t needed_blocks = (nnz + threads - 1) / threads;
@@ -347,10 +404,6 @@ extern "C" int dbs_cuda_sparse_backward_scatter(
     dbs_sparse_scatter_kernel<<<blocks, threads, 0, stream>>>(device_indices, device_values, nnz, device_grad_out, grad_out_count);
     return finish_cuda(cudaPeekAtLastError(), stream);
 }
-
-#ifndef DBS_CUDA_FAST_THREADS
-#define DBS_CUDA_FAST_THREADS 64
-#endif
 
 static __device__ __forceinline__ void insert_local_candidate(
     float* scores,

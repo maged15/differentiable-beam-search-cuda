@@ -23,9 +23,10 @@ extern "C" {
 int dbs_cuda_available(void);
 const char* dbs_cuda_status_string(int status);
 
-/* CUDA calls are asynchronous by default. Set DBS_CUDA_SYNC_CHECK=1 or
- * DBS_CUDA_DEBUG_SYNC=1 in validation builds to synchronize the supplied stream
- * after launches and report device-side execution failures through the status. */
+/* CUDA calls synchronize the supplied stream by default so correctness-oriented
+ * callers receive device-side failures through the returned status. Set
+ * DBS_CUDA_ASYNC=1 to opt into normal asynchronous launch semantics; validation
+ * flags DBS_CUDA_SYNC_CHECK=1 or DBS_CUDA_DEBUG_SYNC=1 still force a sync. */
 
 /* Real CUDA entry point. Inputs/outputs are device pointers. Tokens shape is
  * [B, T, K]; final_scores shape is [B, K]. The implementation performs hard
@@ -92,7 +93,8 @@ int dbs_cuda_decode_forward_variable(
     void* cuda_stream);
 
 /* Sparse backward scatter: grad_out[index[i]] += value[i]. grad_out is a device
- * pointer with grad_out_count float elements. */
+ * pointer with grad_out_count float elements. Duplicate indices accumulate.
+ * Out-of-range indices are rejected before scatter instead of being dropped. */
 int dbs_cuda_sparse_backward_scatter(
     const int64_t* device_indices,
     const float* device_values,

@@ -16,7 +16,7 @@ Production status: not production-certified until `scripts/run_hardware_validati
 - Capped CUDA sparse scatter launches with a grid-stride loop to avoid int grid overflow on large sparse gradients.
 - Aligned shared-library `SOVERSION` with C ABI `10`, and expanded the metadata gate to check ABI/SOVERSION/license consistency.
 - CUDA unbatched `[T,K,V]` inputs are normalized in the public Python wrapper before calling the rank-4 native CUDA extension.
-- CUDA kernels support debug launch synchronization with `DBS_CUDA_SYNC_CHECK=1` or `DBS_CUDA_DEBUG_SYNC=1`.
+- CUDA kernels synchronize by default for correctness-oriented status reporting; set `DBS_CUDA_ASYNC=1` only when async launch semantics are explicitly desired.
 - Non-CUDA CMake builds now export a stable `dbs::dbs_cuda` stub target.
 - License text is consistently MIT.
 - Version metadata uses `VERSION` as the source of truth for Python packaging; CMake library `VERSION` remains `1.0.0` and shared-library `SOVERSION` follows C ABI `10`.
@@ -333,4 +333,4 @@ The CUDA fast path is optimized for `eos_token = -1` no-EOS final-score decoding
 
 ## CUDA error handling
 
-CUDA launch error handling is asynchronous by default to preserve normal PyTorch stream semantics. For validation and CI, set `DBS_CUDA_SYNC_CHECK=1` or `DBS_CUDA_DEBUG_SYNC=1` to synchronize the current stream after custom CUDA launches and surface device-side failures through the returned status/exception.
+CUDA launch error handling synchronizes the current stream by default so device-side failures surface through the returned status or Python exception at the call site. Set `DBS_CUDA_ASYNC=1` only for performance-oriented callers that explicitly want normal asynchronous launch semantics; `DBS_CUDA_SYNC_CHECK=1` or `DBS_CUDA_DEBUG_SYNC=1` still forces synchronization.

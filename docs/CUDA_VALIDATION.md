@@ -9,6 +9,6 @@ Public tensor contract:
 
 The Python wrapper normalizes unbatched CUDA inputs to the native rank-4 kernel path and squeezes the result back to `[K]`. The native CUDA extension also accepts both ranks defensively.
 
-The exact CUDA kernel uses `c10::cuda::CUDAGuard` and PyTorch's current CUDA stream. Set `DBS_CUDA_SYNC_CHECK=1` or `DBS_CUDA_DEBUG_SYNC=1` during validation to synchronize after launches and surface asynchronous device failures at the call site.
+The exact CUDA kernel uses `c10::cuda::CUDAGuard` and PyTorch's current CUDA stream. CUDA calls synchronize that stream by default so device-side failures surface at the call site. Set `DBS_CUDA_ASYNC=1` only for performance-oriented runs that deliberately want normal asynchronous launch semantics; `DBS_CUDA_SYNC_CHECK=1` or `DBS_CUDA_DEBUG_SYNC=1` still forces synchronization.
 
 Public GitHub-hosted CI does not provide an NVIDIA GPU. CUDA parity is therefore required on self-hosted CUDA runners before stable release, even if hosted CPU CI is green.
