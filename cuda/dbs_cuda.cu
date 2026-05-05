@@ -4,8 +4,10 @@
 #include <cuda_runtime.h>
 #include <math_constants.h>
 #include <algorithm>
+#include <atomic>
 #include <climits>
 #include <cstdlib>
+#include <limits>
 
 #ifndef DBS_CUDA_MAX_BEAM
 #define DBS_CUDA_MAX_BEAM 64
@@ -18,6 +20,7 @@
 static constexpr int DBS_CUDA_NO_TOKEN_SENTINEL = INT_MAX;
 static_assert(DBS_CUDA_FAST_THREADS > 0, "DBS_CUDA_FAST_THREADS must be positive");
 static_assert(DBS_CUDA_FAST_THREADS <= 1024, "DBS_CUDA_FAST_THREADS must fit in one CUDA block");
+static std::atomic<int> g_dbs_cuda_synchronize_calls{1};
 
 static __device__ __forceinline__ bool better_candidate(
     float score,
@@ -200,15 +203,52 @@ __global__ void dbs_validate_sparse_indices_kernel(const int64_t* idx, int64_t n
     }
 }
 
-static bool dbs_cuda_async_checks_enabled() {
-    const char* async_check = std::getenv("DBS_CUDA_ASYNC");
-    return async_check && async_check[0] == '1';
+static bool checked_mul_i64(int64_t a, int64_t b, int64_t* out) {
+    if (a < 0 || b < 0) return false;
+    if (a != 0 && b > std::numeric_limits<int64_t>::max() / a) return false;
+    *out = a * b;
+    return true;
+}
+
+static bool validate_decode_element_counts(
+    int batch_size,
+    int steps,
+    int beam_size,
+    int vocab_size,
+    int64_t* token_count = nullptr,
+    int64_t* score_count = nullptr,
+    int64_t* logprob_count = nullptr) {
+    int64_t bt = 0;
+    int64_t btk = 0;
+    int64_t bk = 0;
+    int64_t btkv = 0;
+    if (!checked_mul_i64(batch_size, steps, &bt)) return false;
+    if (!checked_mul_i64(bt, beam_size, &btk)) return false;
+    if (!checked_mul_i64(batch_size, beam_size, &bk)) return false;
+    if (!checked_mul_i64(btk, vocab_size, &btkv)) return false;
+    if (token_count) *token_count = btk;
+    if (score_count) *score_count = bk;
+    if (logprob_count) *logprob_count = btkv;
+    return true;
+}
+
+static int validate_launch_grid_x(int blocks) {
+    if (blocks <= 0) return DBS_CUDA_STATUS_INVALID_ARGUMENT;
+    int device = 0;
+    cudaError_t err = cudaGetDevice(&device);
+    if (err != cudaSuccess) return DBS_CUDA_STATUS_LAUNCH_FAILED;
+    int max_grid_x = 0;
+    err = cudaDeviceGetAttribute(&max_grid_x, cudaDevAttrMaxGridDimX, device);
+    if (err != cudaSuccess) return DBS_CUDA_STATUS_LAUNCH_FAILED;
+    return blocks <= max_grid_x ? DBS_CUDA_STATUS_OK : DBS_CUDA_STATUS_INVALID_ARGUMENT;
 }
 
 static bool dbs_cuda_sync_checks_enabled() {
     const char* sync_check = std::getenv("DBS_CUDA_SYNC_CHECK");
     const char* debug_sync = std::getenv("DBS_CUDA_DEBUG_SYNC");
-    return !dbs_cuda_async_checks_enabled() || (sync_check && sync_check[0] == '1') || (debug_sync && debug_sync[0] == '1');
+    return g_dbs_cuda_synchronize_calls.load(std::memory_order_relaxed) != 0 ||
+        (sync_check && sync_check[0] == '1') ||
+        (debug_sync && debug_sync[0] == '1');
 }
 
 static int finish_cuda(cudaError_t err, cudaStream_t stream) {
@@ -322,6 +362,16 @@ extern "C" int dbs_cuda_available(void) {
     return cudaGetDeviceCount(&count) == cudaSuccess && count > 0 ? 1 : 0;
 }
 
+extern "C" int dbs_cuda_set_synchronization(int synchronize) {
+    if (synchronize != 0 && synchronize != 1) return DBS_CUDA_STATUS_INVALID_ARGUMENT;
+    g_dbs_cuda_synchronize_calls.store(synchronize, std::memory_order_relaxed);
+    return DBS_CUDA_STATUS_OK;
+}
+
+extern "C" int dbs_cuda_get_synchronization(void) {
+    return g_dbs_cuda_synchronize_calls.load(std::memory_order_relaxed);
+}
+
 extern "C" const char* dbs_cuda_status_string(int status) {
     switch (status) {
         case DBS_CUDA_STATUS_OK: return "ok";
@@ -344,6 +394,9 @@ extern "C" int dbs_cuda_decode_forward(
     void* cuda_stream) {
     if (!device_log_probs || !device_tokens || !device_final_scores || batch_size <= 0 || steps <= 0 || beam_size <= 0 || beam_size > DBS_CUDA_MAX_BEAM || vocab_size <= 0 || vocab_size >= DBS_CUDA_NO_TOKEN_SENTINEL) return DBS_CUDA_STATUS_INVALID_ARGUMENT;
     if (eos_token < -1 || eos_token >= vocab_size) return DBS_CUDA_STATUS_INVALID_ARGUMENT;
+    if (!validate_decode_element_counts(batch_size, steps, beam_size, vocab_size)) return DBS_CUDA_STATUS_INVALID_ARGUMENT;
+    int rc = validate_launch_grid_x(batch_size);
+    if (rc != DBS_CUDA_STATUS_OK) return rc;
     cudaStream_t stream = reinterpret_cast<cudaStream_t>(cuda_stream);
     dbs_forward_kernel<<<batch_size, 1, 0, stream>>>(device_log_probs, batch_size, steps, beam_size, vocab_size, eos_token, 0, nullptr, nullptr, nullptr, nullptr, device_tokens, device_final_scores);
     return finish_cuda(cudaPeekAtLastError(), stream);
@@ -363,8 +416,11 @@ extern "C" int dbs_cuda_decode_forward_variable(
     float* device_final_scores,
     void* cuda_stream) {
     if (!device_log_probs || !device_tokens || !device_final_scores || batch_size <= 0 || max_steps <= 0 || max_beam_size <= 0 || max_beam_size > DBS_CUDA_MAX_BEAM || vocab_size <= 0 || vocab_size >= DBS_CUDA_NO_TOKEN_SENTINEL) return DBS_CUDA_STATUS_INVALID_ARGUMENT;
+    if (!validate_decode_element_counts(batch_size, max_steps, max_beam_size, vocab_size)) return DBS_CUDA_STATUS_INVALID_ARGUMENT;
+    int rc = validate_launch_grid_x(batch_size);
+    if (rc != DBS_CUDA_STATUS_OK) return rc;
     cudaStream_t stream = reinterpret_cast<cudaStream_t>(cuda_stream);
-    int rc = launch_init_decode_outputs(batch_size, max_steps, max_beam_size, device_tokens, device_final_scores, stream);
+    rc = launch_init_decode_outputs(batch_size, max_steps, max_beam_size, device_tokens, device_final_scores, stream);
     if (rc != DBS_CUDA_STATUS_OK) return rc;
     rc = validate_variable_metadata_on_device(
         batch_size,
@@ -582,8 +638,11 @@ extern "C" int dbs_cuda_decode_forward_fast_ex(
     int32_t* device_tokens,
     float* device_final_scores,
     void* cuda_stream) {
-    if (!device_log_probs || !device_tokens || !device_final_scores || batch_size <= 0 || steps <= 0 || beam_size <= 0 || vocab_size <= 0 || vocab_size >= DBS_CUDA_NO_TOKEN_SENTINEL || min_length < 0) return DBS_CUDA_STATUS_INVALID_ARGUMENT;
+    if (!device_log_probs || !device_tokens || !device_final_scores || batch_size <= 0 || steps <= 0 || beam_size <= 0 || beam_size > DBS_CUDA_MAX_BEAM || vocab_size <= 0 || vocab_size >= DBS_CUDA_NO_TOKEN_SENTINEL || min_length < 0) return DBS_CUDA_STATUS_INVALID_ARGUMENT;
     if (eos_token < -1 || eos_token >= vocab_size) return DBS_CUDA_STATUS_INVALID_ARGUMENT;
+    if (!validate_decode_element_counts(batch_size, steps, beam_size, vocab_size)) return DBS_CUDA_STATUS_INVALID_ARGUMENT;
+    int rc = validate_launch_grid_x(batch_size);
+    if (rc != DBS_CUDA_STATUS_OK) return rc;
     if (beam_size > DBS_CUDA_FAST_MAX_BEAM) {
         cudaStream_t stream = reinterpret_cast<cudaStream_t>(cuda_stream);
         dbs_forward_kernel<<<batch_size, 1, 0, stream>>>(device_log_probs, batch_size, steps, beam_size, vocab_size, eos_token, min_length, nullptr, nullptr, nullptr, nullptr, device_tokens, device_final_scores);

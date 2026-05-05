@@ -21,4 +21,14 @@ The exact custom CUDA path is the default. The score-only ATen top-k fast path i
 ## CUDA option support
 
 CUDA forward supports the public tensor shapes `[T,K,V] -> [K]` and `[B,T,K,V] -> [B,K]`.
-The CUDA extension currently implements final-score forward decoding for `beam_size` and `eos_token`; options that change CPU decoding semantics, such as `min_length`, `length_penalty_alpha`, temperature fields, relaxed-pool sizing, and soft-top-k iteration settings, are rejected on CUDA instead of being silently ignored. CPU tensors continue to accept the full `DBSOptions` tuple and support surrogate autograd.
+The CUDA extension currently implements hard final-score forward decoding for `beam_size`, `eos_token`, `min_length`, and `validate_inputs`. With validation enabled it rejects NaN and `+Inf` while allowing `-Inf` masked logits. Options that require CPU surrogate or shaping semantics, such as `length_penalty_alpha`, temperature fields, relaxed-pool sizing, `vocab_block`, and soft-top-k iteration settings, are rejected on CUDA instead of being silently ignored. CPU tensors continue to accept the full `DBSOptions` tuple and support surrogate autograd.
+
+| Option | CPU | CUDA |
+| --- | --- | --- |
+| `beam_size` | supported | supported |
+| `eos_token` | supported | supported |
+| `min_length` | supported | supported |
+| `validate_inputs` | supported | supported |
+| `selected_temperature`, `soft_topk_temperature` | supported for surrogate gradients | rejected |
+| `relaxed_pool_multiplier`, `soft_topk_*` iterations/tolerance | supported for surrogate gradients | rejected |
+| `length_penalty_alpha`, `vocab_block` | supported by CPU decoder/shaping paths | rejected |

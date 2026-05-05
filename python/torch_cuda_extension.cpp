@@ -45,13 +45,26 @@ static void validate_eos_token_bound(int64_t eos_token) {
     TORCH_CHECK(eos_token >= -1 && eos_token <= static_cast<int64_t>(std::numeric_limits<int>::max()), "eos_token must be -1 or fit in int");
 }
 
+static int64_t checked_mul_i64(int64_t a, int64_t b, const char* name) {
+    TORCH_CHECK(a >= 0 && b >= 0, name, " dimensions must be non-negative");
+    TORCH_CHECK(a == 0 || b <= std::numeric_limits<int64_t>::max() / a, name, " size overflow");
+    return a * b;
+}
+
+static void validate_cuda_decode_element_counts(int64_t B, int64_t T, int64_t K, int64_t V) {
+    const int64_t bt = checked_mul_i64(B, T, "B*T");
+    const int64_t btk = checked_mul_i64(bt, K, "B*T*K");
+    checked_mul_i64(B, K, "B*K");
+    checked_mul_i64(btk, V, "B*T*K*V");
+}
+
 static void validate_min_length_bound(int64_t min_length) {
     TORCH_CHECK(min_length >= 0 && min_length <= static_cast<int64_t>(std::numeric_limits<int>::max()), "min_length must be in [0, INT_MAX]");
 }
 
 static void validate_cuda_log_prob_values(const torch::Tensor& log_probs) {
-    TORCH_CHECK(!log_probs.isnan().any().item<bool>(), "log_probs contains NaN or +Inf");
-    TORCH_CHECK(!log_probs.eq(std::numeric_limits<float>::infinity()).any().item<bool>(), "log_probs contains NaN or +Inf");
+    auto invalid = log_probs.isnan().logical_or(log_probs.eq(std::numeric_limits<float>::infinity()));
+    TORCH_CHECK(!invalid.any().item<bool>(), "log_probs contains NaN or +Inf");
 }
 
 static std::tuple<torch::Tensor, torch::Tensor> decode_forward_cuda_exact_kernel(
@@ -75,6 +88,7 @@ static std::tuple<torch::Tensor, torch::Tensor> decode_forward_cuda_exact_kernel
     const int T = static_cast<int>(x.size(1));
     const int K = static_cast<int>(x.size(2));
     const int V = static_cast<int>(x.size(3));
+    validate_cuda_decode_element_counts(B, T, K, V);
 
     auto tokens = torch::empty({B, T, K}, torch::TensorOptions().device(log_probs.device()).dtype(torch::kInt32));
     auto scores = torch::empty({B, K}, log_probs.options());
@@ -109,6 +123,8 @@ static torch::Tensor final_scores_forward_cuda_aten_topk(torch::Tensor log_probs
     const int64_t T = x.size(1);
     const int64_t K = x.size(2);
     const int64_t V = x.size(3);
+    validate_cuda_decode_element_counts(B, T, K, V);
+    checked_mul_i64(K, V, "K*V");
 
     // DBS initialization semantics: only beam 0 is live at t=0. This is different
     // from a naive PyTorch reference that initializes every beam to zero.
@@ -231,6 +247,7 @@ static std::tuple<torch::Tensor, torch::Tensor> test_decode_forward_variable(
     const int T = static_cast<int>(x.size(1));
     const int K = static_cast<int>(x.size(2));
     const int V = static_cast<int>(x.size(3));
+    validate_cuda_decode_element_counts(B, T, K, V);
 
     auto tokens = torch::empty({B, T, K}, torch::TensorOptions().device(log_probs.device()).dtype(torch::kInt32));
     auto scores = torch::empty({B, K}, log_probs.options());
@@ -257,6 +274,7 @@ static int test_decode_forward_status(torch::Tensor log_probs, int64_t beam_size
     const int T = static_cast<int>(x.size(1));
     const int K = static_cast<int>(x.size(2));
     const int V = static_cast<int>(x.size(3));
+    validate_cuda_decode_element_counts(B, T, K, V);
     auto tokens = torch::empty({B, T, K}, torch::TensorOptions().device(log_probs.device()).dtype(torch::kInt32));
     auto scores = torch::empty({B, K}, log_probs.options());
     const auto stream = at::cuda::getCurrentCUDAStream(log_probs.get_device());

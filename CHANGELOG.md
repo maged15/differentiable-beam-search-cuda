@@ -7,6 +7,9 @@
 - Made setup.py CUDA fast-math opt-in through `DBS_CUDA_USE_FAST_MATH=1`.
 - Added sparse-gradient index guards to the ctypes and JAX wrappers.
 - Added a public CUDA `decode()` helper returning token traces plus final scores.
+- Added direct CUDA C API boundary checks for launch grid size and decode element-count overflow.
+- Added explicit CUDA synchronization policy APIs and removed the environment-only async toggle.
+- Hardened ctypes wrapper cleanup paths around native handle/result ownership.
 - Fixed the AVX-512 exponential range-reduction constant used by sigmoid/softmax-style gradient helpers.
 - Added internal scalar-vs-AVX-512 parity coverage for exp, selected softmax weights, and relaxed top-k weights.
 - Enabled GCC target-attribute builds for AVX2/FMA and SSE4.2 helper paths.

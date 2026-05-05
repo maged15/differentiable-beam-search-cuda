@@ -3,6 +3,12 @@
 
 int dbs_cuda_available(void) { return 0; }
 
+int dbs_cuda_set_synchronization(int synchronize) {
+    return (synchronize == 0 || synchronize == 1) ? DBS_CUDA_STATUS_OK : DBS_CUDA_STATUS_INVALID_ARGUMENT;
+}
+
+int dbs_cuda_get_synchronization(void) { return 1; }
+
 const char* dbs_cuda_status_string(int status) {
     switch (status) {
         case DBS_CUDA_STATUS_OK: return "ok";

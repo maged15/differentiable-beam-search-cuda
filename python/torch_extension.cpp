@@ -7,6 +7,7 @@
 #include <vector>
 #include <limits>
 #include <cmath>
+#include <cstring>
 
 
 
@@ -114,7 +115,8 @@ torch::Tensor final_scores_forward(
         throw_if_failed(h, dbs_decode(h, x.data_ptr<float>(), T, V, &r), "dbs_decode");
         auto out = torch::empty({beam_size}, torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCPU));
         const float* scores = dbs_result_final_scores(r);
-        std::copy(scores, scores + beam_size, out.data_ptr<float>());
+        TORCH_CHECK(scores != nullptr, "dbs_result_final_scores returned null");
+        std::memcpy(out.data_ptr<float>(), scores, static_cast<size_t>(beam_size) * sizeof(float));
         dbs_free_result(r);
         dbs_destroy(h);
         return out;

@@ -24,9 +24,12 @@ int dbs_cuda_available(void);
 const char* dbs_cuda_status_string(int status);
 
 /* CUDA calls synchronize the supplied stream by default so correctness-oriented
- * callers receive device-side failures through the returned status. Set
- * DBS_CUDA_ASYNC=1 to opt into normal asynchronous launch semantics; validation
- * flags DBS_CUDA_SYNC_CHECK=1 or DBS_CUDA_DEBUG_SYNC=1 still force a sync. */
+ * callers receive device-side failures through the returned status. Use
+ * dbs_cuda_set_synchronization(0) only for callers that explicitly want normal
+ * asynchronous launch semantics. Validation flags DBS_CUDA_SYNC_CHECK=1 or
+ * DBS_CUDA_DEBUG_SYNC=1 still force a sync. */
+int dbs_cuda_set_synchronization(int synchronize);
+int dbs_cuda_get_synchronization(void);
 
 /* Real CUDA entry point. Inputs/outputs are device pointers. Tokens shape is
  * [B, T, K]; final_scores shape is [B, K]. The implementation performs hard

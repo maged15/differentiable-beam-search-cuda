@@ -3,6 +3,7 @@
 
 #include <cuda_runtime.h>
 
+#include <climits>
 #include <cmath>
 #include <cstdint>
 #include <iostream>
@@ -158,6 +159,31 @@ void test_direct_decode_eos_validation(cudaStream_t stream) {
         dbs_cuda_decode_forward_fast_ex(log_probs.get(), B, T, K, V, V, 0, tokens.get(), scores.get(), stream),
         DBS_CUDA_STATUS_INVALID_ARGUMENT,
         "fast decode too-large eos");
+    expect_status(
+        dbs_cuda_decode_forward(log_probs.get(), B, T, DBS_CUDA_MAX_BEAM + 1, V, -1, tokens.get(), scores.get(), stream),
+        DBS_CUDA_STATUS_INVALID_ARGUMENT,
+        "serial decode beam above CUDA maximum");
+    expect_status(
+        dbs_cuda_decode_forward_fast_ex(log_probs.get(), B, T, DBS_CUDA_MAX_BEAM + 1, V, -1, 0, tokens.get(), scores.get(), stream),
+        DBS_CUDA_STATUS_INVALID_ARGUMENT,
+        "fast decode beam above CUDA maximum");
+    expect_status(
+        dbs_cuda_decode_forward_fast_ex(log_probs.get(), B, T, K, V, -1, -1, tokens.get(), scores.get(), stream),
+        DBS_CUDA_STATUS_INVALID_ARGUMENT,
+        "fast decode negative min_length");
+    expect_status(
+        dbs_cuda_decode_forward_fast_ex(log_probs.get(), B, T, K, INT_MAX, -1, 0, tokens.get(), scores.get(), stream),
+        DBS_CUDA_STATUS_INVALID_ARGUMENT,
+        "fast decode reserved vocab sentinel");
+}
+
+void test_synchronization_policy_api() {
+    check(dbs_cuda_get_synchronization() == 1, "CUDA C API must synchronize by default");
+    expect_status(dbs_cuda_set_synchronization(0), DBS_CUDA_STATUS_OK, "disable CUDA synchronization");
+    check(dbs_cuda_get_synchronization() == 0, "CUDA synchronization should be disabled explicitly");
+    expect_status(dbs_cuda_set_synchronization(2), DBS_CUDA_STATUS_INVALID_ARGUMENT, "invalid synchronization setting");
+    expect_status(dbs_cuda_set_synchronization(1), DBS_CUDA_STATUS_OK, "enable CUDA synchronization");
+    check(dbs_cuda_get_synchronization() == 1, "CUDA synchronization should be enabled explicitly");
 }
 
 std::size_t lp_index(int b, int t, int k, int v, int max_steps, int max_beam, int vocab) {
@@ -256,6 +282,7 @@ int main() {
         CUDA_CHECK(cudaSetDevice(0));
         CudaStream stream;
         check(dbs_cuda_available() == 1, "dbs_cuda_available must report an available CUDA device");
+        test_synchronization_policy_api();
         test_sparse_scatter(stream.stream);
         test_direct_decode_eos_validation(stream.stream);
         test_variable_decode_metadata_and_padding(stream.stream);

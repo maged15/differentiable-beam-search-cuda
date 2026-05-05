@@ -133,6 +133,8 @@ jobs:
           bash scripts/build_wheels.sh --cuda --no-isolation
           bash scripts/test_wheels_clean.sh --cuda
           python3 -m pytest python/tests/test_cuda_parity.py python/tests/test_public_tensor_api.py -q
+          DBS_CUDA_USE_FAST_MATH=1 DBS_BUILD_TORCH_CUDA=1 python3 -m pip install -e . --no-build-isolation
+          python3 -m pytest python/tests/test_cuda_parity.py -q
           python3 benchmarks/bench_dbs_cuda_direct.py
 
   arm64-neon-self-hosted:

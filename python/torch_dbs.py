@@ -161,19 +161,29 @@ class _DBSFinalScores(torch.autograd.Function):
             raise RuntimeError("dbs_create failed")
 
         result = ctypes.c_void_p()
-        ptr = x.data_ptr()
-        code = dbs.lib.dbs_decode(handle, ctypes.cast(ptr, ctypes.POINTER(ctypes.c_float)), T, V, ctypes.byref(result))
-        dbs.check(handle, code)
+        try:
+            ptr = x.data_ptr()
+            code = dbs.lib.dbs_decode(handle, ctypes.cast(ptr, ctypes.POINTER(ctypes.c_float)), T, V, ctypes.byref(result))
+            dbs.check(handle, code)
 
-        final_ptr = dbs.lib.dbs_result_final_scores(result)
-        out = torch.empty((options.beam_size,), dtype=torch.float32)
-        for i in range(options.beam_size):
-            out[i] = final_ptr[i]
+            final_ptr = dbs.lib.dbs_result_final_scores(result)
+            if not final_ptr:
+                raise RuntimeError("dbs_result_final_scores returned null")
+            out = torch.empty((options.beam_size,), dtype=torch.float32)
+            for i in range(options.beam_size):
+                out[i] = final_ptr[i]
 
-        ctx.state = _CState(dbs, handle, result.value)
-        ctx.shape = tuple(x.shape)
-        ctx.options = options
-        return out
+            ctx.state = _CState(dbs, handle, result.value)
+            ctx.shape = tuple(x.shape)
+            ctx.options = options
+            handle = 0
+            result = ctypes.c_void_p()
+            return out
+        finally:
+            if result.value:
+                dbs.lib.dbs_free_result(result)
+            if handle:
+                dbs.lib.dbs_destroy(handle)
 
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor):
@@ -182,25 +192,30 @@ class _DBSFinalScores(torch.autograd.Function):
         grad_output = grad_output.detach().contiguous().to(dtype=torch.float32, device="cpu")
         grad_final = ctypes.cast(grad_output.data_ptr(), ctypes.POINTER(ctypes.c_float))
         backward = ctypes.c_void_p()
-        code = dbs.lib.dbs_backward(state.handle, state.result, None, None, grad_final, ctypes.byref(backward))
-        dbs.check(state.handle, code)
-
-        T, K, V = ctx.shape
-        grad = torch.zeros((T * K * V,), dtype=torch.float32)
-        grad_numel = grad.numel()
-        n = dbs.lib.dbs_backward_sparse_logprob_count(backward)
-        idx = dbs.lib.dbs_backward_sparse_logprob_indices(backward)
-        val = dbs.lib.dbs_backward_sparse_logprob_values(backward)
         try:
+            code = dbs.lib.dbs_backward(state.handle, state.result, None, None, grad_final, ctypes.byref(backward))
+            dbs.check(state.handle, code)
+
+            T, K, V = ctx.shape
+            grad = torch.zeros((T * K * V,), dtype=torch.float32)
+            grad_numel = grad.numel()
+            n = dbs.lib.dbs_backward_sparse_logprob_count(backward)
+            if n < 0:
+                raise RuntimeError("sparse gradient count must be non-negative")
+            idx = dbs.lib.dbs_backward_sparse_logprob_indices(backward)
+            val = dbs.lib.dbs_backward_sparse_logprob_values(backward)
+            if n and (not idx or not val):
+                raise RuntimeError("sparse gradient buffers are null")
             for i in range(n):
                 j = int(idx[i])
                 if j < 0 or j >= grad_numel:
                     raise RuntimeError("sparse gradient index out of bounds")
                 grad[j] += float(val[i])
+            return grad.reshape((T, K, V)), None, None
         finally:
-            dbs.lib.dbs_free_backward(backward)
+            if backward.value:
+                dbs.lib.dbs_free_backward(backward)
             state.close()
-        return grad.reshape((T, K, V)), None, None
 
 
 def final_scores(log_probs: torch.Tensor, options: DBSOptions, lib_path: Optional[str] = None) -> torch.Tensor:

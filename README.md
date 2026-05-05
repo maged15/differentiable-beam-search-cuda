@@ -16,7 +16,7 @@ Production status: not production-certified until `scripts/run_hardware_validati
 - Capped CUDA sparse scatter launches with a grid-stride loop to avoid int grid overflow on large sparse gradients.
 - Aligned shared-library `SOVERSION` with C ABI `10`, and expanded the metadata gate to check ABI/SOVERSION/license consistency.
 - CUDA unbatched `[T,K,V]` inputs are normalized in the public Python wrapper before calling the rank-4 native CUDA extension.
-- CUDA kernels synchronize by default for correctness-oriented status reporting; set `DBS_CUDA_ASYNC=1` only when async launch semantics are explicitly desired.
+- CUDA kernels synchronize by default for correctness-oriented status reporting; use `dbs_cuda_set_synchronization(0)` only when async launch semantics are explicitly desired.
 - CUDA Python forward now supports `min_length`, rejects NaN/+Inf when `validate_inputs=1`, and exposes an optional `decode()` helper for CUDA token traces.
 - CUDA fast-math is opt-in for CMake and setup.py builds; correctness/release validation builds leave it disabled.
 - Non-CUDA CMake builds now export a stable `dbs::dbs_cuda` stub target.
@@ -335,4 +335,4 @@ The CUDA fast path is optimized for `eos_token = -1` no-EOS final-score decoding
 
 ## CUDA error handling
 
-CUDA launch error handling synchronizes the current stream by default so device-side failures surface through the returned status or Python exception at the call site. Set `DBS_CUDA_ASYNC=1` only for performance-oriented callers that explicitly want normal asynchronous launch semantics; `DBS_CUDA_SYNC_CHECK=1` or `DBS_CUDA_DEBUG_SYNC=1` still forces synchronization.
+CUDA launch error handling synchronizes the current stream by default so device-side failures surface through the returned status or Python exception at the call site. C/CUDA callers can opt into asynchronous launch semantics with `dbs_cuda_set_synchronization(0)`; `DBS_CUDA_SYNC_CHECK=1` or `DBS_CUDA_DEBUG_SYNC=1` still forces synchronization in validation runs.
