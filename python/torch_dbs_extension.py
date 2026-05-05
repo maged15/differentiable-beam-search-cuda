@@ -102,8 +102,8 @@ def _validate_public_shape(log_probs: torch.Tensor, options: DBSOptions) -> bool
 def _validate_cuda_supported_options(options: DBSOptions) -> None:
     """CUDA forward currently implements final-score decoding only.
 
-    It supports beam_size/eos_token plus Python-side input validation. Options that
-    change CPU decoding semantics are rejected instead of silently ignored.
+    It supports beam_size/eos_token/min_length plus input validation. Options
+    that change other CPU decoding semantics are rejected instead of silently ignored.
     """
     default = DBSOptions(beam_size=options.beam_size, eos_token=options.eos_token)
     unsupported = []
@@ -115,13 +115,12 @@ def _validate_cuda_supported_options(options: DBSOptions) -> None:
         "length_penalty_alpha",
         "soft_topk_tolerance",
         "soft_topk_max_iters",
-        "min_length",
     ):
         if getattr(options, name) != getattr(default, name):
             unsupported.append(f"{name}={getattr(options, name)!r}")
     if unsupported:
         raise ValueError(
-            "CUDA forward currently supports only beam_size/eos_token and default "
+            "CUDA forward currently supports only beam_size/eos_token/min_length and default "
             "decoder-shaping options; unsupported CUDA options: " + ", ".join(unsupported)
         )
 
@@ -169,9 +168,9 @@ class _DBSFinalScores(torch.autograd.Function):
             # identically to CPU and direct native calls remain an implementation
             # detail. The native CUDA binding also accepts both ranks as a safety net.
             if input_was_unbatched:
-                y = _cuda_ext.final_scores_forward_cuda(x.unsqueeze(0), options.beam_size, options.eos_token)
+                y = _cuda_ext.final_scores_forward_cuda(x.unsqueeze(0), options.beam_size, options.eos_token, options.min_length, options.validate_inputs)
                 return y.squeeze(0)
-            return _cuda_ext.final_scores_forward_cuda(x, options.beam_size, options.eos_token)
+            return _cuda_ext.final_scores_forward_cuda(x, options.beam_size, options.eos_token, options.min_length, options.validate_inputs)
 
         return _cpu_forward_batched(x, options)
 
@@ -197,3 +196,26 @@ def final_scores(log_probs: torch.Tensor, options: DBSOptions) -> torch.Tensor:
     CPU inputs support surrogate autograd. CUDA inputs support forward only.
     """
     return _DBSFinalScores.apply(log_probs, options)
+
+
+def decode(log_probs: torch.Tensor, options: DBSOptions) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Return CUDA hard-decode token traces and final scores.
+
+    This debugging API keeps ``final_scores()`` unchanged. CUDA inputs return
+    ``(tokens, scores)`` with shapes ``[T,K], [K]`` or ``[B,T,K], [B,K]``.
+    CPU token-trace exposure remains available through the C ABI.
+    """
+    input_was_unbatched = _validate_public_shape(log_probs, options)
+    if not log_probs.is_cuda:
+        raise RuntimeError("decode() currently exposes CUDA token traces only; use final_scores() or the C ABI for CPU")
+    if _cuda_ext is None:
+        raise RuntimeError(
+            "CUDA tensor received, but dbs_torch_cuda_ext was not built. "
+            "Reinstall with DBS_BUILD_TORCH_CUDA=1 and run python/tests/test_cuda_parity.py."
+        )
+    _validate_cuda_supported_options(options)
+    x = log_probs.detach().to(dtype=torch.float32).contiguous()
+    if input_was_unbatched:
+        tokens, scores = _cuda_ext.decode_forward_cuda(x.unsqueeze(0), options.beam_size, options.eos_token, options.min_length, options.validate_inputs)
+        return tokens.squeeze(0), scores.squeeze(0)
+    return _cuda_ext.decode_forward_cuda(x, options.beam_size, options.eos_token, options.min_length, options.validate_inputs)

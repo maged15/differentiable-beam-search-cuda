@@ -8,6 +8,7 @@ root = Path(__file__).resolve().parents[1]
 version = (root / "VERSION").read_text().strip()
 pyproject = (root / "pyproject.toml").read_text()
 readme = (root / "README.md").read_text()
+changelog = (root / "CHANGELOG.md").read_text()
 cmake = (root / "CMakeLists.txt").read_text()
 header = (root / "include" / "dbs.h").read_text()
 source = (root / "src" / "differentiable_beam.cpp").read_text()
@@ -19,6 +20,11 @@ if 'version =' in re.sub(r'\[tool\.setuptools\.dynamic\][\s\S]*', '', pyproject)
     errors.append('pyproject.toml must not hardcode project.version')
 if version not in readme:
     errors.append(f'README.md does not mention VERSION {version}')
+changelog_current = re.search(r'^##\s+([^\s]+)', changelog, re.MULTILINE)
+if not changelog_current:
+    errors.append('CHANGELOG.md must start with a version heading')
+elif changelog_current.group(1) != version:
+    errors.append(f'CHANGELOG.md current heading is {changelog_current.group(1)}, expected {version}')
 for stale in re.findall(r'1\.0\.0rc\d+', readme):
     if stale != version:
         errors.append(f'README.md contains stale version {stale}, expected {version}')

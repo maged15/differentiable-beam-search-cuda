@@ -187,13 +187,19 @@ class _DBSFinalScores(torch.autograd.Function):
 
         T, K, V = ctx.shape
         grad = torch.zeros((T * K * V,), dtype=torch.float32)
+        grad_numel = grad.numel()
         n = dbs.lib.dbs_backward_sparse_logprob_count(backward)
         idx = dbs.lib.dbs_backward_sparse_logprob_indices(backward)
         val = dbs.lib.dbs_backward_sparse_logprob_values(backward)
-        for i in range(n):
-            grad[int(idx[i])] += float(val[i])
-        dbs.lib.dbs_free_backward(backward)
-        state.close()
+        try:
+            for i in range(n):
+                j = int(idx[i])
+                if j < 0 or j >= grad_numel:
+                    raise RuntimeError("sparse gradient index out of bounds")
+                grad[j] += float(val[i])
+        finally:
+            dbs.lib.dbs_free_backward(backward)
+            state.close()
         return grad.reshape((T, K, V)), None, None
 
 

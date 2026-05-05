@@ -17,6 +17,8 @@ Production status: not production-certified until `scripts/run_hardware_validati
 - Aligned shared-library `SOVERSION` with C ABI `10`, and expanded the metadata gate to check ABI/SOVERSION/license consistency.
 - CUDA unbatched `[T,K,V]` inputs are normalized in the public Python wrapper before calling the rank-4 native CUDA extension.
 - CUDA kernels synchronize by default for correctness-oriented status reporting; set `DBS_CUDA_ASYNC=1` only when async launch semantics are explicitly desired.
+- CUDA Python forward now supports `min_length`, rejects NaN/+Inf when `validate_inputs=1`, and exposes an optional `decode()` helper for CUDA token traces.
+- CUDA fast-math is opt-in for CMake and setup.py builds; correctness/release validation builds leave it disabled.
 - Non-CUDA CMake builds now export a stable `dbs::dbs_cuda` stub target.
 - License text is consistently MIT.
 - Version metadata uses `VERSION` as the source of truth for Python packaging; CMake library `VERSION` remains `1.0.0` and shared-library `SOVERSION` follows C ABI `10`.

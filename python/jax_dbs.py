@@ -138,7 +138,10 @@ def _backward_np(x: np.ndarray, g: np.ndarray, options: DBSOptions, lib_path: Op
         idx = dbs.lib.dbs_backward_sparse_logprob_indices(b)
         val = dbs.lib.dbs_backward_sparse_logprob_values(b)
         for i in range(n):
-            out[int(idx[i])] += float(val[i])
+            j = int(idx[i])
+            if j < 0 or j >= out.size:
+                raise RuntimeError("sparse gradient index out of bounds")
+            out[j] += float(val[i])
         return out.reshape((t, k, v))
     finally:
         if b.value:

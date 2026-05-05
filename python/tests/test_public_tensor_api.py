@@ -90,7 +90,7 @@ def test_cuda_unbatched_public_contract_if_extension_available():
     torch.testing.assert_close(y, ref, rtol=1e-5, atol=1e-5)
 
 
-def test_cuda_unsupported_options_rejected_if_extension_available():
+def test_cuda_min_length_supported_if_extension_available():
     if not torch.cuda.is_available():
         return
     try:
@@ -99,5 +99,5 @@ def test_cuda_unsupported_options_rejected_if_extension_available():
         return
     x = torch.randn(4, 2, 64, device="cuda", dtype=torch.float32)
     x = torch.log_softmax(x, dim=-1)
-    with pytest.raises(ValueError, match="unsupported CUDA options"):
-        final_scores(x, DBSOptions(beam_size=2, min_length=1))
+    y = final_scores(x, DBSOptions(beam_size=2, min_length=1))
+    assert y.shape == (2,)
