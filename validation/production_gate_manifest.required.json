@@ -1,0 +1,12 @@
+{
+  "cuda_parity": true,
+  "torch_wheel_cpu": true,
+  "torch_wheel_cuda": true,
+  "large_vocab_benchmarks": true,
+  "sanitizers": true,
+  "fuzzing": true,
+  "abi_compatibility": true,
+  "zero_allocation_hot_path": true,
+  "mixed_precision_parity": true,
+  "hardware_matrix": true
+}

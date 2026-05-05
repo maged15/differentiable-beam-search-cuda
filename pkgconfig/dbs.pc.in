@@ -1,0 +1,10 @@
+prefix=@CMAKE_INSTALL_PREFIX@
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include
+
+Name: dbs
+Description: Hardened differentiable beam-search decoder
+Version: @PROJECT_VERSION@
+Libs: -L${libdir} -ldbs
+Cflags: -I${includedir}

@@ -1,0 +1,40 @@
+name: python-release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  cpu-wheel:
+    name: Build CPU wheel
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install deps
+        run: python -m pip install -U -r requirements-dev.txt
+      - name: Build wheel
+        run: bash scripts/build_wheels.sh --no-isolation
+      - name: Test wheel
+        run: bash scripts/test_wheels_clean.sh
+      - name: Generate release artifacts
+        run: bash scripts/generate_release_artifacts.sh
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-release-artifacts
+          path: |
+            dist/*.whl
+            validation/release_artifacts/**
+      - name: Attest wheel provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: 'dist/*.whl'

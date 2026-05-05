@@ -1,0 +1,21 @@
+{
+  "cuda_parity": false,
+  "torch_wheel_cpu": false,
+  "torch_wheel_cuda": false,
+  "large_vocab_benchmarks": false,
+  "sanitizers": false,
+  "fuzzing": false,
+  "abi_compatibility": false,
+  "zero_allocation_hot_path": false,
+  "mixed_precision_parity": false,
+  "hardware_matrix": false,
+  "evidence": {
+    "cuda_gpu": "paste nvidia-smi output and test log path",
+    "torch_wheels": "paste wheel filenames and pytest log paths",
+    "benchmarks": "paste benchmark CSV/JSON paths",
+    "sanitizers": "paste ASAN/UBSAN/TSAN/MSAN logs",
+    "fuzzing": "paste libFuzzer/AFL corpus and crash-free duration",
+    "abi": "paste check_abi and check_abi_compat logs",
+    "hardware": "paste platform matrix runner IDs"
+  }
+}

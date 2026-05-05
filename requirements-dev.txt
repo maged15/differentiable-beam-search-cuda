@@ -1,0 +1,7 @@
+-r requirements.txt
+build>=1.2
+wheel>=0.42
+setuptools>=68
+pytest>=8
+transformers>=4.40
+accelerate>=0.30

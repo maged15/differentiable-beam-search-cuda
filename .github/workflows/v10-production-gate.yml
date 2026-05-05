@@ -1,0 +1,17 @@
+name: v1.0 production gate
+
+on:
+  workflow_dispatch:
+  release:
+    types: [created]
+
+jobs:
+  require-self-hosted-evidence:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Refuse release without attached CI evidence
+        run: |
+          test -f validation/v10_production_manifest.json
+          python3 scripts/validate_v10_production_manifest.py validation/v10_production_manifest.json
+          bash scripts/run_v10_production_gate.sh validation/v10_production_manifest.json

@@ -1,0 +1,18 @@
+# v1.0 candidate platform matrix. Replace every TBD with exact CI-produced values before release.
+linux_x86_64_avx512: TBD
+linux_x86_64_avx2: TBD
+linux_x86_64_scalar: TBD
+linux_aarch64_neon: TBD
+macos_arm64_neon: TBD
+windows_x86_64_avx2: TBD
+cuda_gpu_model: TBD
+nvidia_driver: TBD
+cuda_toolkit: TBD
+pytorch: TBD
+python: TBD
+cmake: TBD
+gcc: TBD
+clang: TBD
+msvc: TBD
+container_image_digest_cpu: TBD
+container_image_digest_cuda: TBD

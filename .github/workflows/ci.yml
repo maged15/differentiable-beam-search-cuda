@@ -1,0 +1,160 @@
+name: dbs-ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  linux-cpu:
+    name: Linux ${{ matrix.compiler.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler:
+          - { name: gcc, cc: gcc, cxx: g++ }
+          - { name: clang, cc: clang, cxx: clang++ }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install compilers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang
+      - name: Configure
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DDBS_BUILD_SHARED=ON \
+            -DDBS_BUILD_TESTS=ON \
+            -DDBS_BUILD_BENCHMARKS=ON \
+            -DCMAKE_C_COMPILER=${{ matrix.compiler.cc }} \
+            -DCMAKE_CXX_COMPILER=${{ matrix.compiler.cxx }}
+      - name: Build
+        run: cmake --build build --parallel
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+      - name: ABI exact check
+        run: bash scripts/check_abi.sh build/libdbs.so
+      - name: ABI compatibility check
+        run: bash scripts/check_abi_compat.sh build/libdbs.so
+      - name: Benchmark smoke
+        run: ./build/dbs_bench 4 2 1024 2 1
+
+  sanitizers:
+    name: ASAN/UBSAN
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Clang
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang
+      - name: ASAN UBSAN
+        run: |
+          cmake -S . -B build-asan \
+            -DDBS_ENABLE_SANITIZERS=ON \
+            -DDBS_BUILD_TESTS=ON \
+            -DDBS_BUILD_BENCHMARKS=OFF \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++
+          cmake --build build-asan --parallel
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 ctest --test-dir build-asan --output-on-failure
+      - name: Fuzzer smoke
+        run: |
+          cmake -S . -B build-fuzz \
+            -DDBS_BUILD_FUZZER=ON \
+            -DDBS_ENABLE_SANITIZERS=ON \
+            -DDBS_BUILD_TESTS=OFF \
+            -DDBS_BUILD_BENCHMARKS=OFF \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++
+          cmake --build build-fuzz --parallel
+          ./build-fuzz/dbs_fuzz -max_total_time=15
+
+  macos-cpu:
+    name: macOS
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DDBS_BUILD_TESTS=ON \
+            -DDBS_BUILD_BENCHMARKS=ON
+      - name: Build
+        run: cmake --build build --parallel
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  windows-cpu:
+    name: Windows MSVC
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        shell: pwsh
+        run: cmake -S . -B build -DDBS_BUILD_TESTS=ON -DDBS_BUILD_BENCHMARKS=ON
+      - name: Build
+        shell: pwsh
+        run: cmake --build build --config Release --parallel
+      - name: Test
+        shell: pwsh
+        run: ctest --test-dir build -C Release --output-on-failure
+
+  python-extension:
+    name: Python extension CPU wheel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install Python deps
+        run: python -m pip install -U pip wheel build setuptools numpy packaging torch pytest
+      - name: Build wheel
+        run: bash scripts/build_wheels.sh --no-isolation
+      - name: Test wheel
+        run: bash scripts/test_wheels_clean.sh
+      - name: Pytest extension
+        run: python -m pytest python/tests/test_torch_extension.py python/tests/test_public_tensor_api.py -q
+
+  cuda-self-hosted:
+    name: CUDA self-hosted
+    if: ${{ vars.DBS_ENABLE_SELF_HOSTED_CUDA == '1' }}
+    runs-on: [self-hosted, linux, x64, cuda]
+    steps:
+      - uses: actions/checkout@v4
+      - name: CUDA build and parity
+        run: |
+          cmake -S . -B build-cuda -DDBS_ENABLE_CUDA=ON -DDBS_BUILD_TESTS=ON
+          cmake --build build-cuda --parallel
+          ctest --test-dir build-cuda --output-on-failure
+          bash scripts/build_wheels.sh --cuda --no-isolation
+          bash scripts/test_wheels_clean.sh --cuda
+          python3 -m pytest python/tests/test_cuda_parity.py python/tests/test_public_tensor_api.py -q
+          python3 benchmarks/bench_dbs_cuda_direct.py
+
+  arm64-neon-self-hosted:
+    name: ARM64 NEON self-hosted
+    if: ${{ vars.DBS_ENABLE_SELF_HOSTED_ARM64 == '1' }}
+    runs-on: [self-hosted, linux, arm64]
+    steps:
+      - uses: actions/checkout@v4
+      - name: ARM64 NEON validation
+        run: bash scripts/run_hardware_validation.sh
+
+  avx512-self-hosted:
+    name: AVX-512 self-hosted
+    if: ${{ vars.DBS_ENABLE_SELF_HOSTED_AVX512 == '1' }}
+    runs-on: [self-hosted, linux, x64, avx512]
+    steps:
+      - uses: actions/checkout@v4
+      - name: AVX-512 validation
+        run: bash scripts/run_hardware_validation.sh
+
+  version-metadata:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/check_version_metadata.py

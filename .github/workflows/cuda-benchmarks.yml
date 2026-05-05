@@ -1,0 +1,43 @@
+name: cuda-benchmarks
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * 1'
+
+jobs:
+  cuda-validate:
+    name: CUDA parity and benchmark gate
+    if: ${{ vars.DBS_ENABLE_SELF_HOSTED_CUDA == '1' }}
+    runs-on: [self-hosted, linux, x64, cuda]
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Environment
+        run: |
+          nvidia-smi
+          nvcc --version
+          python3 --version
+      - name: Install Python requirements
+        run: python3 -m pip install -U -r requirements-dev.txt
+      - name: CUDA validate
+        run: make cuda-validate
+      - name: Exact CUDA fallback parity
+        run: DBS_FORCE_EXACT_CUDA_KERNEL=1 python3 benchmarks/bench_dbs_cuda_direct.py
+      - name: Soak CUDA smoke
+        run: python3 scripts/run_soak_test.py --device cuda --iterations 100 --out validation/release_artifacts/soak-cuda-smoke.json
+      - name: Upload benchmark artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cuda-benchmark-artifacts
+          path: |
+            benchmarks/results/*.csv
+            logs/**
+            validation/release_artifacts/*.json
+
+  skipped:
+    name: CUDA runner disabled
+    if: ${{ vars.DBS_ENABLE_SELF_HOSTED_CUDA != '1' }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo 'Set repository variable DBS_ENABLE_SELF_HOSTED_CUDA=1 and attach a self-hosted CUDA runner to enable this gate.'

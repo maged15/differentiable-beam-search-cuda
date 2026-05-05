@@ -1,0 +1,92 @@
+import csv
+import os
+import time
+import torch
+from torch_dbs_extension import DBSOptions, final_scores
+
+os.environ.setdefault("DBS_ENABLE_SCORE_ONLY_FAST_PATH", "1")
+torch.manual_seed(1234)
+
+def cuda_ms(fn, repeats=30, warmup=5):
+    for _ in range(warmup):
+        fn()
+    torch.cuda.synchronize()
+    start = torch.cuda.Event(enable_timing=True)
+    end = torch.cuda.Event(enable_timing=True)
+    start.record()
+    for _ in range(repeats):
+        fn()
+    end.record()
+    torch.cuda.synchronize()
+    return start.elapsed_time(end) / repeats
+
+def cpu_ms(fn, repeats=10, warmup=2):
+    for _ in range(warmup):
+        fn()
+    t0 = time.perf_counter()
+    for _ in range(repeats):
+        fn()
+    return (time.perf_counter() - t0) * 1000.0 / repeats
+
+def pytorch_ref_scores(x, K):
+    B, T, _, V = x.shape
+    scores = torch.full((B, K), -float("inf"), device=x.device, dtype=x.dtype)
+    scores[:, 0] = 0.0
+    for t in range(T):
+        cand = scores[:, :, None] + x[:, t, :, :]
+        scores, _ = torch.topk(cand.reshape(B, K * V), K, dim=1)
+    return scores
+
+shapes = [
+    (1, 8, 4, 32_000),
+    (4, 8, 4, 32_000),
+    (4, 16, 4, 32_000),
+    (4, 16, 8, 32_000),
+    (2, 16, 4, 64_000),
+    (4, 16, 8, 64_000),
+    (1, 16, 8, 128_000),
+    (2, 16, 8, 128_000),
+]
+
+rows = []
+for B, T, K, V in shapes:
+    print(f"running B={B} T={T} K={K} V={V}", flush=True)
+    x_cpu = torch.randn(B, T, K, V, dtype=torch.float32)
+    x_cpu = torch.log_softmax(x_cpu, dim=-1)
+    x_cuda = x_cpu.cuda()
+    opts = DBSOptions(beam_size=K, eos_token=-1)
+    torch.cuda.reset_peak_memory_stats()
+
+    cpu_out = torch.stack([final_scores(x_cpu[b], opts).detach() for b in range(B)], dim=0)
+    cuda_out = final_scores(x_cuda, opts).detach().cpu()
+    torch_ref_out = pytorch_ref_scores(x_cuda, K).detach().cpu()
+
+    cpu_cuda_diff = (cpu_out - cuda_out).abs().max().item()
+    cuda_ref_diff = (cuda_out - torch_ref_out).abs().max().item()
+    dbs_cuda_ms = cuda_ms(lambda: final_scores(x_cuda, opts))
+    torch_cuda_ms = cuda_ms(lambda: pytorch_ref_scores(x_cuda, K))
+    dbs_cpu_ms = cpu_ms(lambda: [final_scores(x_cpu[b], opts) for b in range(B)])
+    peak_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
+    rows.append({
+        "B": B, "T": T, "K": K, "V": V,
+        "dbs_cpu_ms": round(dbs_cpu_ms, 4),
+        "dbs_cuda_ms": round(dbs_cuda_ms, 4),
+        "torch_cuda_ms": round(torch_cuda_ms, 4),
+        "cuda_vs_cpu_speedup": round(dbs_cpu_ms / dbs_cuda_ms, 3) if dbs_cuda_ms > 0 else None,
+        "cuda_vs_torch_speedup": round(torch_cuda_ms / dbs_cuda_ms, 3) if dbs_cuda_ms > 0 else None,
+        "peak_cuda_mb": round(peak_mb, 2),
+        "max_abs_cpu_cuda_diff": cpu_cuda_diff,
+        "max_abs_cuda_torch_ref_diff": cuda_ref_diff,
+        "pass_cpu_cuda": cpu_cuda_diff <= 1e-5,
+        "pass_cuda_torch_ref": cuda_ref_diff <= 1e-5,
+    })
+
+with open("benchmarks/results/bench-dbs-cuda-direct.csv", "w", newline="") as f:
+    writer = csv.DictWriter(f, fieldnames=rows[0].keys())
+    writer.writeheader()
+    writer.writerows(rows)
+
+for r in rows:
+    print(r)
+
+assert all(r["pass_cpu_cuda"] and r["pass_cuda_torch_ref"] for r in rows)
