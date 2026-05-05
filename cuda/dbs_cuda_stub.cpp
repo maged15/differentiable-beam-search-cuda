@@ -28,3 +28,7 @@ int dbs_cuda_sparse_backward_scatter(const int64_t*, const float*, int64_t, floa
 int dbs_cuda_decode_forward_fast(const float*, int, int, int, int, int, int32_t*, float*, void*) {
     return DBS_CUDA_STATUS_UNAVAILABLE;
 }
+
+int dbs_cuda_decode_forward_fast_ex(const float*, int, int, int, int, int, int, int32_t*, float*, void*) {
+    return DBS_CUDA_STATUS_UNAVAILABLE;
+}

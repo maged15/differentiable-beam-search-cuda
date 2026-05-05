@@ -57,6 +57,40 @@ def test_cuda_sparse_scatter_duplicate_invalid_and_empty_indices():
     torch.testing.assert_close(empty_grad, torch.zeros(3))
 
 
+def test_cuda_fast_kernel_enforces_min_length_for_eos():
+    ext = _require_cuda_ext()
+    x_cpu = torch.full((1, 3, 2, 6), -10.0, dtype=torch.float32)
+    x_cpu[:, :, :, 0] = 0.0      # EOS would win immediately without min_length.
+    x_cpu[:, :, :, 1] = -0.1
+    x_cpu[:, :, :, 2] = -0.2
+
+    tokens, scores = ext._test_decode_forward_fast_ex(x_cpu.cuda(), 2, 0, 2)
+    tokens_cpu = tokens.detach().cpu()
+    assert 0 not in tokens_cpu[0, 0].tolist()
+    assert 0 in tokens_cpu[0, 1].tolist()
+
+    opts = DBSOptions(beam_size=2, eos_token=0, min_length=2, validate_inputs=1)
+    cpu_scores = final_scores(x_cpu[0], opts).detach()
+    torch.testing.assert_close(scores.detach().cpu()[0], cpu_scores, rtol=1e-5, atol=1e-5)
+
+
+def test_cuda_variable_decode_ignores_out_of_vocab_eos_safely():
+    ext = _require_cuda_ext()
+    torch.manual_seed(707)
+    x_cpu = torch.randn(2, 3, 2, 16, dtype=torch.float32)
+    x_cpu = torch.log_softmax(x_cpu, dim=-1)
+    x = x_cpu.cuda()
+    steps = torch.tensor([3, 3], device="cuda", dtype=torch.int32)
+    beams = torch.tensor([2, 2], device="cuda", dtype=torch.int32)
+    invalid_eos = torch.tensor([999, -1], device="cuda", dtype=torch.int32)
+    no_eos = torch.tensor([-1, -1], device="cuda", dtype=torch.int32)
+    min_lengths = torch.tensor([0, 0], device="cuda", dtype=torch.int32)
+
+    _, invalid_scores = ext._test_decode_forward_variable(x, steps, beams, invalid_eos, min_lengths)
+    _, no_eos_scores = ext._test_decode_forward_variable(x, steps, beams, no_eos, min_lengths)
+    torch.testing.assert_close(invalid_scores.detach().cpu(), no_eos_scores.detach().cpu(), rtol=1e-5, atol=1e-5)
+
+
 @pytest.mark.skipif(os.environ.get("DBS_CUDA_LARGE_SCATTER_TEST") != "1", reason="large scatter grid-stride test is release-hardware gated")
 def test_cuda_sparse_scatter_large_nnz_grid_stride():
     ext = _require_cuda_ext()

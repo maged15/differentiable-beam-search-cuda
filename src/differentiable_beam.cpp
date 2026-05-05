@@ -894,6 +894,8 @@ DBS_AVX512_TARGET void scan_parent_row(
 
     const __m512 parent_vec = _mm512_set1_ps(parent_raw);
     const __m512 scale_vec = _mm512_set1_ps(inv_penalty);
+    const __m512 neg_inf_vec = _mm512_set1_ps(-std::numeric_limits<float>::infinity());
+    const __m512 pos_inf_vec = _mm512_set1_ps(std::numeric_limits<float>::infinity());
 
     alignas(64) float rank_tmp[16];
     alignas(64) float raw_tmp[16];
@@ -917,7 +919,10 @@ DBS_AVX512_TARGET void scan_parent_row(
             const __m512 rank_vec = _mm512_mul_ps(raw_vec, scale_vec);
 
             const float threshold = top[top_count - 1].score;
-            const __mmask16 mask = _mm512_cmp_ps_mask(rank_vec, _mm512_set1_ps(threshold), _CMP_GT_OS);
+            const __mmask16 finite_mask =
+                _mm512_cmp_ps_mask(lp, neg_inf_vec, _CMP_GT_OS) &
+                _mm512_cmp_ps_mask(lp, pos_inf_vec, _CMP_LT_OS);
+            const __mmask16 mask = finite_mask & _mm512_cmp_ps_mask(rank_vec, _mm512_set1_ps(threshold), _CMP_GT_OS);
 
             if (mask) {
                 _mm512_store_ps(rank_tmp, rank_vec);
@@ -941,7 +946,10 @@ DBS_AVX512_TARGET void scan_parent_row(
             const __m512 rank_vec = _mm512_mul_ps(raw_vec, scale_vec);
 
             const float threshold = top[top_count - 1].score;
-            __mmask16 mask = lane_mask & _mm512_cmp_ps_mask(rank_vec, _mm512_set1_ps(threshold), _CMP_GT_OS);
+            const __mmask16 finite_mask =
+                _mm512_cmp_ps_mask(lp, neg_inf_vec, _CMP_GT_OS) &
+                _mm512_cmp_ps_mask(lp, pos_inf_vec, _CMP_LT_OS);
+            __mmask16 mask = lane_mask & finite_mask & _mm512_cmp_ps_mask(rank_vec, _mm512_set1_ps(threshold), _CMP_GT_OS);
 
             if (mask) {
                 _mm512_store_ps(rank_tmp, rank_vec);
@@ -1047,6 +1055,8 @@ DBS_AVX2_TARGET void scan_parent_row(
 
     const __m256 parent_vec = _mm256_set1_ps(parent_raw);
     const __m256 scale_vec = _mm256_set1_ps(inv_penalty);
+    const __m256 neg_inf_vec = _mm256_set1_ps(-std::numeric_limits<float>::infinity());
+    const __m256 pos_inf_vec = _mm256_set1_ps(std::numeric_limits<float>::infinity());
 
     for (int base = 0; base < vocab_size; base += vocab_block) {
         const int end = std::min(vocab_size, base + vocab_block);
@@ -1058,7 +1068,11 @@ DBS_AVX2_TARGET void scan_parent_row(
             const __m256 rank_vec = _mm256_mul_ps(raw_vec, scale_vec);
 
             const float threshold = top[top_count - 1].score;
-            const int mask = _mm256_movemask_ps(_mm256_cmp_ps(rank_vec, _mm256_set1_ps(threshold), _CMP_GT_OS));
+            const __m256 finite = _mm256_and_ps(
+                _mm256_cmp_ps(lp, neg_inf_vec, _CMP_GT_OS),
+                _mm256_cmp_ps(lp, pos_inf_vec, _CMP_LT_OS));
+            const __m256 better = _mm256_cmp_ps(rank_vec, _mm256_set1_ps(threshold), _CMP_GT_OS);
+            const int mask = _mm256_movemask_ps(_mm256_and_ps(finite, better));
 
             if (mask) {
                 alignas(32) float rank_tmp[8];
@@ -2109,6 +2123,10 @@ private:
                     seq.erase(it, seq.end());
                 }
             }
+            seq.erase(
+                seq.begin(),
+                std::find_if(seq.begin(), seq.end(), [](int32_t token) { return token >= 0; })
+            );
 
             seqs[k] = std::move(seq);
         }
@@ -2307,6 +2325,23 @@ static std::vector<InternalParityCase> build_internal_parity_cases() {
             }
         }
         cases.push_back(InternalParityCase{"negative_infinity", opt, T, V, x, {}, {}, -1, false});
+    }
+
+    {
+        const int T = 2, K = 3, V = 8;
+        BeamOptions opt = base_options(K);
+        opt.validate_inputs = 0;
+        std::vector<float> x = filled_log_probs(T, K, V, -4.0f);
+        for (int t = 0; t < T; ++t) {
+            for (int k = 0; k < K; ++k) {
+                x[lp_index(t, k, 1, K, V)] = -0.05f;
+                x[lp_index(t, k, 3, K, V)] = -0.10f;
+                x[lp_index(t, k, 6, K, V)] = -0.25f;
+            }
+        }
+        x[lp_index(0, 0, 2, K, V)] = std::numeric_limits<float>::infinity();
+        x[lp_index(1, 1, 5, K, V)] = std::numeric_limits<float>::infinity();
+        cases.push_back(InternalParityCase{"positive_infinity_validation_disabled", opt, T, V, x, {}, {}, -1, false});
     }
 
     {

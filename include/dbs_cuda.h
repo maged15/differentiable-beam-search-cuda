@@ -58,6 +58,18 @@ int dbs_cuda_decode_forward_fast(
     float* device_final_scores,
     void* cuda_stream);
 
+int dbs_cuda_decode_forward_fast_ex(
+    const float* device_log_probs,
+    int batch_size,
+    int steps,
+    int beam_size,
+    int vocab_size,
+    int eos_token,
+    int min_length,
+    int32_t* device_tokens,
+    float* device_final_scores,
+    void* cuda_stream);
+
 int dbs_cuda_decode_forward_variable(
     const float* device_log_probs,
     int batch_size,
