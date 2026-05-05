@@ -195,8 +195,9 @@ extern "C" int dbs_cuda_sparse_backward_scatter(
     float* device_grad_out,
     int64_t grad_out_count,
     void* cuda_stream) {
-    if (!device_indices || !device_values || !device_grad_out || nnz < 0 || grad_out_count <= 0) return DBS_CUDA_STATUS_INVALID_ARGUMENT;
+    if (!device_grad_out || nnz < 0 || grad_out_count <= 0) return DBS_CUDA_STATUS_INVALID_ARGUMENT;
     if (nnz == 0) return DBS_CUDA_STATUS_OK;
+    if (!device_indices || !device_values) return DBS_CUDA_STATUS_INVALID_ARGUMENT;
     cudaStream_t stream = reinterpret_cast<cudaStream_t>(cuda_stream);
     const int threads = 256;
     constexpr int max_portable_grid_x = 65535;

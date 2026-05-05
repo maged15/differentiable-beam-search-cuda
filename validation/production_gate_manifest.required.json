@@ -1,12 +1,14 @@
 {
-  "cuda_parity": true,
-  "torch_wheel_cpu": true,
-  "torch_wheel_cuda": true,
-  "large_vocab_benchmarks": true,
-  "sanitizers": true,
-  "fuzzing": true,
-  "abi_compatibility": true,
-  "zero_allocation_hot_path": true,
-  "mixed_precision_parity": true,
-  "hardware_matrix": true
+  "_comment": "Template only. Release gates must validate validation/generated/production_gate_manifest.generated.json with real artifacts.",
+  "cuda_parity": false,
+  "torch_wheel_cpu": false,
+  "torch_wheel_cuda": false,
+  "large_vocab_benchmarks": false,
+  "sanitizers": false,
+  "fuzzing": false,
+  "abi_compatibility": false,
+  "zero_allocation_hot_path": false,
+  "mixed_precision_parity": false,
+  "hardware_matrix": false,
+  "artifacts": {}
 }

@@ -287,7 +287,7 @@ v1.0 adds fail-closed production gates rather than assuming production readiness
 DBS_RELEASE_STRICT=1 DBS_REQUIRE_CUDA=1 DBS_REQUIRE_TORCH=1 DBS_REQUIRE_LONG_FUZZ=1 ./scripts/run_release_gate.sh
 ```
 
-The release gate requires CPU tests, ABI exact and compatibility checks, wheel build/tests, CUDA parity, benchmark artifacts, and long fuzz/sanitizer runs. Missing hardware or missing evidence fails the gate.
+The release gate requires CPU tests, ABI exact and compatibility checks, wheel build/tests, CUDA parity, benchmark artifacts, and long fuzz/sanitizer runs. Missing hardware or missing evidence fails the gate. Passing evidence is generated into `validation/generated/production_gate_manifest.generated.json` and backed by ignored artifacts under `release/`; the checked-in manifest under `validation/` is a non-passing template.
 
 ## Release-candidate validation targets
 

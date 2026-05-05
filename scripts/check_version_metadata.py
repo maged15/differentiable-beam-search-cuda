@@ -22,6 +22,13 @@ if version not in readme:
 for stale in re.findall(r'1\.0\.0rc\d+', readme):
     if stale != version:
         errors.append(f'README.md contains stale version {stale}, expected {version}')
+if f'return "{version}"' not in source:
+    errors.append(f'dbs_version_string() must return VERSION {version}')
+for rel in ["validation/v10_production_manifest.template.json", "validation/fixtures/cuda/golden_fixture_manifest.json"]:
+    text = (root / rel).read_text()
+    for stale in re.findall(r'1\.0\.0rc\d+', text):
+        if stale != version:
+            errors.append(f'{rel} contains stale version {stale}, expected {version}')
 abi_values = set(re.findall(r'#define\s+DBS_ABI_VERSION\s+(\d+)', header + "\n" + source))
 if len(abi_values) != 1:
     errors.append(f'DBS_ABI_VERSION definitions disagree: {sorted(abi_values)}')

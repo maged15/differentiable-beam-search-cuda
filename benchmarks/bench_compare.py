@@ -9,12 +9,17 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
+import platform
 import subprocess
 import sys
 import time
+from pathlib import Path
 from typing import Callable, Dict, List
 
 import torch
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def torch_greedy(x: torch.Tensor) -> torch.Tensor:
@@ -64,6 +69,7 @@ def main() -> None:
     parser.add_argument("--repeats", type=int, default=10)
     parser.add_argument("--device", choices=["cpu", "cuda"], default="cpu")
     parser.add_argument("--hf-model", default="", help="optional small causal LM for transformers.generate baseline")
+    parser.add_argument("--metadata-out", default="", help="optional JSON metadata path for the benchmark run")
     args = parser.parse_args()
 
     device = torch.device("cuda" if args.device == "cuda" and torch.cuda.is_available() else "cpu")
@@ -98,6 +104,24 @@ def main() -> None:
         print(dbs_csv)
     except Exception as exc:
         print(f"\n# dbs C++ benchmark unavailable: {exc}")
+
+    if args.metadata_out:
+        out = Path(args.metadata_out)
+        if not out.is_absolute():
+            out = ROOT / out
+        out.parent.mkdir(parents=True, exist_ok=True)
+        metadata = {
+            "version": (ROOT / "VERSION").read_text().strip(),
+            "device": str(device),
+            "dbs_bench": args.dbs_bench,
+            "repeats": args.repeats,
+            "rows": len(rows),
+            "platform": platform.platform(),
+            "python": platform.python_version(),
+            "torch": torch.__version__,
+            "torch_cuda": torch.version.cuda,
+        }
+        out.write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

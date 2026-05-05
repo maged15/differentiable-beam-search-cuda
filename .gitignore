@@ -15,4 +15,6 @@ profiles/
 *.whl
 .venv/
 benchmarks/results/
+release/
+validation/generated/
 .pytest_cache/

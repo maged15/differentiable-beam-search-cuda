@@ -7,6 +7,7 @@ Run after building with:
 """
 
 import importlib
+import os
 
 import pytest
 import torch
@@ -41,6 +42,32 @@ def test_cuda_forward_matches_cpu_final_scores(shape, eos):
 def test_cuda_sparse_scatter_module_available():
     ext = _require_cuda_ext()
     assert ext.cuda_available()
+
+
+def test_cuda_sparse_scatter_duplicate_invalid_and_empty_indices():
+    ext = _require_cuda_ext()
+    indices = torch.tensor([0, 1, 1, -1, 4, 99], device="cuda", dtype=torch.int64)
+    values = torch.tensor([1.0, 2.0, 3.0, 7.0, 5.0, 11.0], device="cuda", dtype=torch.float32)
+    grad = ext._test_sparse_backward_scatter(indices, values, 5).detach().cpu()
+    torch.testing.assert_close(grad, torch.tensor([1.0, 5.0, 0.0, 0.0, 5.0]))
+
+    empty_indices = torch.empty((0,), device="cuda", dtype=torch.int64)
+    empty_values = torch.empty((0,), device="cuda", dtype=torch.float32)
+    empty_grad = ext._test_sparse_backward_scatter(empty_indices, empty_values, 3).detach().cpu()
+    torch.testing.assert_close(empty_grad, torch.zeros(3))
+
+
+@pytest.mark.skipif(os.environ.get("DBS_CUDA_LARGE_SCATTER_TEST") != "1", reason="large scatter grid-stride test is release-hardware gated")
+def test_cuda_sparse_scatter_large_nnz_grid_stride():
+    ext = _require_cuda_ext()
+    grad_count = int(os.environ.get("DBS_CUDA_LARGE_SCATTER_GRAD_COUNT", "1024"))
+    nnz = int(os.environ.get("DBS_CUDA_LARGE_SCATTER_NNZ", str(65535 * 256 + 4096)))
+    indices = torch.arange(nnz, device="cuda", dtype=torch.int64).remainder_(grad_count)
+    values = torch.ones((nnz,), device="cuda", dtype=torch.float32)
+    grad = ext._test_sparse_backward_scatter(indices, values, grad_count).detach().cpu()
+    expected = torch.full((grad_count,), float(nnz // grad_count), dtype=torch.float32)
+    expected[: nnz % grad_count] += 1.0
+    torch.testing.assert_close(grad, expected, rtol=0.0, atol=0.0)
 
 
 def test_cuda_exact_kernel_uses_current_stream():

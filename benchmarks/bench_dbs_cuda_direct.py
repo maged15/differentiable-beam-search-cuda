@@ -1,11 +1,25 @@
 import csv
+import json
 import os
+import platform
+import subprocess
 import time
+from pathlib import Path
 import torch
 from torch_dbs_extension import DBSOptions, final_scores
 
 os.environ.setdefault("DBS_ENABLE_SCORE_ONLY_FAST_PATH", "1")
 torch.manual_seed(1234)
+ROOT = Path(__file__).resolve().parents[1]
+RESULTS = ROOT / "benchmarks" / "results"
+RESULTS.mkdir(parents=True, exist_ok=True)
+
+
+def _run_text(cmd):
+    try:
+        return subprocess.check_output(cmd, cwd=ROOT, stderr=subprocess.STDOUT, text=True, timeout=10).strip()
+    except Exception:
+        return None
 
 def cuda_ms(fn, repeats=30, warmup=5):
     for _ in range(warmup):
@@ -81,10 +95,24 @@ for B, T, K, V in shapes:
         "pass_cuda_torch_ref": cuda_ref_diff <= 1e-5,
     })
 
-with open("benchmarks/results/bench-dbs-cuda-direct.csv", "w", newline="") as f:
+csv_path = RESULTS / "bench-dbs-cuda-direct.csv"
+with csv_path.open("w", newline="") as f:
     writer = csv.DictWriter(f, fieldnames=rows[0].keys())
     writer.writeheader()
     writer.writerows(rows)
+
+metadata = {
+    "version": (ROOT / "VERSION").read_text().strip(),
+    "git_sha": _run_text(["git", "rev-parse", "HEAD"]),
+    "platform": platform.platform(),
+    "python": platform.python_version(),
+    "torch": torch.__version__,
+    "torch_cuda": torch.version.cuda,
+    "cuda_device": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
+    "rows": len(rows),
+    "csv": str(csv_path.relative_to(ROOT)),
+}
+(RESULTS / "bench-dbs-cuda-direct.metadata.json").write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n")
 
 for r in rows:
     print(r)

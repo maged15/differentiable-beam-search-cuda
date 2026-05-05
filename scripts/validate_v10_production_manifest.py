@@ -28,6 +28,7 @@ REQUIRED_TRUE = [
     "release_report_attached",
 ]
 REQUIRED_REVIEWS = ["api_abi", "security", "numerical_correctness", "performance", "ml_integration"]
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def main() -> int:
@@ -37,8 +38,9 @@ def main() -> int:
     manifest = Path(sys.argv[1])
     data = json.loads(manifest.read_text())
     failures = []
-    if data.get("version") not in {"1.0.0", "1.0.0rc7"}:
-        failures.append("version must be 1.0.0 or 1.0.0rc7")
+    expected_version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
+    if data.get("version") != expected_version:
+        failures.append(f"version must match VERSION ({expected_version})")
     for key in REQUIRED_TRUE:
         if data.get(key) is not True:
             failures.append(f"{key} must be true")

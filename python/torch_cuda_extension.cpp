@@ -107,9 +107,35 @@ static torch::Tensor final_scores_forward_cuda(torch::Tensor log_probs, int64_t 
     return final_scores_forward_cuda_exact_kernel(log_probs, beam_size, eos_token);
 }
 
+static torch::Tensor test_sparse_backward_scatter(torch::Tensor indices, torch::Tensor values, int64_t grad_count) {
+    TORCH_CHECK(indices.is_cuda(), "indices must be CUDA");
+    TORCH_CHECK(values.is_cuda(), "values must be CUDA");
+    TORCH_CHECK(indices.device() == values.device(), "indices and values must be on the same CUDA device");
+    TORCH_CHECK(indices.dtype() == torch::kInt64, "indices must be int64");
+    TORCH_CHECK(values.dtype() == torch::kFloat32, "values must be float32");
+    TORCH_CHECK(indices.numel() == values.numel(), "indices and values must have the same number of elements");
+    TORCH_CHECK(grad_count > 0, "grad_count must be positive");
+
+    c10::cuda::CUDAGuard device_guard(values.device());
+    auto idx = indices.contiguous();
+    auto val = values.contiguous();
+    auto grad = torch::zeros({grad_count}, values.options());
+    const auto stream = at::cuda::getCurrentCUDAStream(values.get_device());
+    const int rc = dbs_cuda_sparse_backward_scatter(
+        idx.data_ptr<int64_t>(),
+        val.data_ptr<float>(),
+        static_cast<int64_t>(idx.numel()),
+        grad.data_ptr<float>(),
+        grad_count,
+        stream.stream());
+    TORCH_CHECK(rc == DBS_CUDA_STATUS_OK, dbs_cuda_status_string(rc));
+    return grad;
+}
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("final_scores_forward_cuda", &final_scores_forward_cuda, "DBS CUDA final scores forward for [T,K,V] or [B,T,K,V]");
     m.def("final_scores_forward_cuda_exact_kernel", &final_scores_forward_cuda_exact_kernel, "DBS exact custom CUDA kernel final scores forward");
     m.def("final_scores_forward_cuda_aten_topk", &final_scores_forward_cuda_aten_topk, "DBS ATen topk CUDA final scores forward");
+    m.def("_test_sparse_backward_scatter", &test_sparse_backward_scatter, "Test-only wrapper for DBS CUDA sparse backward scatter");
     m.def("cuda_available", []() { return dbs_cuda_available() != 0; });
 }

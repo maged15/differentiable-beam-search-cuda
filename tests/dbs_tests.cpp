@@ -523,6 +523,7 @@ static void test_production_gate_manifest_validation() {
 
 int main() {
     assert(dbs_abi_version() == DBS_ABI_VERSION);
+    assert(std::strcmp(dbs_version_string(), "1.0.0rc9") == 0);
     test_deterministic_ties();
     test_constraints();
     test_invalid_nan_rejected();

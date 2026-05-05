@@ -4,7 +4,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 : "${CC:=clang}"
 : "${CXX:=clang++}"
 : "${DBS_FUZZ_SECONDS:=300}"
-ART="$ROOT/validation/release_artifacts/fuzz"
+: "${DBS_RELEASE_ARTIFACT_DIR:=$ROOT/release}"
+ART="${DBS_FUZZ_ARTIFACT_DIR:-$DBS_RELEASE_ARTIFACT_DIR/fuzz}"
 mkdir -p "$ART" "$ART/corpus" "$ART/crashes"
 
 {
