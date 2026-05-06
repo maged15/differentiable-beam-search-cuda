@@ -112,6 +112,9 @@ __global__ void dbs_forward_kernel(
                 }
                 continue;
             }
+            // Variable-batch callers provide dense [B, max_steps, max_beam_size, V]
+            // storage; beam_size remains the stride even when this example has fewer
+            // active beams.
             const int64_t base = ((static_cast<int64_t>(b) * steps + t) * beam_size + parent) * vocab_size;
             for (int v = 0; v < vocab_size; ++v) {
                 if (eos_valid && v == eos && prev_lengths[parent] + 1 < min_len) continue;
@@ -258,9 +261,10 @@ static int finish_cuda(cudaError_t err, cudaStream_t stream) {
     if (dbs_cuda_sync_checks_enabled()) {
         err = cudaStreamSynchronize(stream);
         if (err != cudaSuccess) return DBS_CUDA_STATUS_LAUNCH_FAILED;
+        err = cudaGetLastError();
+        return err == cudaSuccess ? DBS_CUDA_STATUS_OK : DBS_CUDA_STATUS_LAUNCH_FAILED;
     }
-    err = cudaGetLastError();
-    return err == cudaSuccess ? DBS_CUDA_STATUS_OK : DBS_CUDA_STATUS_LAUNCH_FAILED;
+    return DBS_CUDA_STATUS_OK;
 }
 
 static int launch_init_decode_outputs(
@@ -550,13 +554,10 @@ __global__ void dbs_forward_fast_kernel(
             const float ps = prev_scores[parent];
             if (!isfinite(ps)) continue;
             if (eos_valid && prev_ended[parent]) {
-                // Only thread 0 inserts the EOS carry-forward candidate. This is safe because
-                // thread 0's local list is merged into the global best by the __syncthreads
-                // reduction below before any thread reads it, preventing double-counting.
-                if (tid == 0) insert_local_candidate(local_scores, local_parents, local_tokens, local_lengths, local_ended, local_from_logprob, K, ps, parent, eos_token, prev_lengths[parent], 1, 0);
                 continue;
             }
-            const int64_t base = ((static_cast<int64_t>(b) * steps + t) * K + parent) * vocab_size;
+            // Match the serial kernel's dense max-beam stride contract.
+            const int64_t base = ((static_cast<int64_t>(b) * steps + t) * beam_size + parent) * vocab_size;
             for (int v = tid; v < vocab_size; v += blockDim.x) {
                 if (eos_valid && v == eos_token && prev_lengths[parent] + 1 < min_length) continue;
                 const float lp = log_probs[base + v];
@@ -591,6 +592,27 @@ __global__ void dbs_forward_fast_kernel(
                 best_lengths[i] = 0;
                 best_ended[i] = 0;
                 best_from_logprob[i] = 1;
+            }
+            if (eos_valid) {
+                for (int parent = 0; parent < K; ++parent) {
+                    const float ps = prev_scores[parent];
+                    if (prev_ended[parent] && isfinite(ps)) {
+                        insert_local_candidate(
+                            best_scores,
+                            best_parents,
+                            best_tokens,
+                            best_lengths,
+                            best_ended,
+                            best_from_logprob,
+                            K,
+                            ps,
+                            parent,
+                            eos_token,
+                            prev_lengths[parent],
+                            1,
+                            0);
+                    }
+                }
             }
             for (int lane = 0; lane < DBS_CUDA_FAST_THREADS; ++lane) {
                 const int lane_off = lane * DBS_CUDA_FAST_MAX_BEAM;

@@ -52,8 +52,11 @@ int dbs_cuda_decode_forward(
 
 /* Variable-length batched variant. Optional per-example arrays are device
  * pointers; null arrays use the scalar arguments/defaults. Per-example
- * metadata is validated on device before decode. Dense output slots outside a
- * per-example beam/step range are initialized to -1 tokens and -Inf scores. */
+ * metadata is validated on device before decode. device_log_probs must use dense
+ * [B, max_steps, max_beam_size, vocab_size] layout with max_beam_size as the
+ * beam stride, not a tightly packed per-example beam_size stride. Dense output
+ * slots outside a per-example beam/step range are initialized to -1 tokens and
+ * -Inf scores. */
 
 /* Cooperative CUDA backend. One block decodes one batch example; threads cooperatively
  * scan vocabulary blocks and reduce deterministic top-k candidates in shared memory.

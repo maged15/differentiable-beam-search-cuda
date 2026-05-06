@@ -177,6 +177,60 @@ void test_direct_decode_eos_validation(cudaStream_t stream) {
         "fast decode reserved vocab sentinel");
 }
 
+void test_fast_decode_eos_carry_matches_serial(cudaStream_t stream) {
+    constexpr int B = 1;
+    constexpr int T = 4;
+    constexpr int K = 4;
+    constexpr int V = 160;
+    constexpr int eos = 0;
+
+    std::vector<float> host_log_probs(B * T * K * V, -9.0f);
+    auto set_lp = [&](int t, int k, int v, float value) {
+        host_log_probs[((static_cast<std::size_t>(t) * K + k) * V) + v] = value;
+    };
+
+    set_lp(0, 0, eos, 0.0f);
+    set_lp(0, 0, 1, -0.01f);
+    set_lp(0, 0, 2, -0.02f);
+    set_lp(0, 0, 3, -0.03f);
+
+    for (int t = 1; t < T; ++t) {
+        for (int k = 0; k < K; ++k) {
+            set_lp(t, k, eos, -9.0f);
+            for (int v = 1; v < V; ++v) {
+                const float score = -0.04f - 0.0001f * static_cast<float>((v + k * 11 + t * 17) % 97);
+                set_lp(t, k, v, score);
+            }
+        }
+    }
+
+    DeviceBuffer<float> log_probs(host_log_probs.size());
+    DeviceBuffer<int32_t> serial_tokens(B * T * K);
+    DeviceBuffer<int32_t> fast_tokens(B * T * K);
+    DeviceBuffer<float> serial_scores(B * K);
+    DeviceBuffer<float> fast_scores(B * K);
+    log_probs.copy_from(host_log_probs, stream);
+
+    expect_status(
+        dbs_cuda_decode_forward(log_probs.get(), B, T, K, V, eos, serial_tokens.get(), serial_scores.get(), stream),
+        DBS_CUDA_STATUS_OK,
+        "serial decode eos carry parity");
+    expect_status(
+        dbs_cuda_decode_forward_fast_ex(log_probs.get(), B, T, K, V, eos, 0, fast_tokens.get(), fast_scores.get(), stream),
+        DBS_CUDA_STATUS_OK,
+        "fast decode eos carry parity");
+
+    const auto serial_token_host = serial_tokens.copy_to(stream);
+    const auto fast_token_host = fast_tokens.copy_to(stream);
+    check(serial_token_host == fast_token_host, "fast decode tokens must match serial decode with EOS carry-forward");
+
+    const auto serial_score_host = serial_scores.copy_to(stream);
+    const auto fast_score_host = fast_scores.copy_to(stream);
+    for (std::size_t i = 0; i < serial_score_host.size(); ++i) {
+        expect_close(fast_score_host[i], serial_score_host[i], "fast decode score must match serial decode with EOS carry-forward");
+    }
+}
+
 void test_synchronization_policy_api() {
     check(dbs_cuda_get_synchronization() == 1, "CUDA C API must synchronize by default");
     expect_status(dbs_cuda_set_synchronization(0), DBS_CUDA_STATUS_OK, "disable CUDA synchronization");
@@ -285,6 +339,7 @@ int main() {
         test_synchronization_policy_api();
         test_sparse_scatter(stream.stream);
         test_direct_decode_eos_validation(stream.stream);
+        test_fast_decode_eos_carry_matches_serial(stream.stream);
         test_variable_decode_metadata_and_padding(stream.stream);
         CUDA_CHECK(cudaStreamSynchronize(stream.stream));
     } catch (const std::exception& ex) {
