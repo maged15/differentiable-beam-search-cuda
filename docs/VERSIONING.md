@@ -2,7 +2,7 @@
 
 This repository has three related version numbers:
 
-- Python package version: `1.0.0rc9` in `VERSION`. This uses PEP 440 because it is consumed by Python packaging tools.
+- Python package version: `1.0.0` in `VERSION`. This uses PEP 440 because it is consumed by Python packaging tools.
 - CMake/shared-library version: `1.0.0` in `CMakeLists.txt`. CMake package-version files require numeric versions, so prerelease labels are not encoded there.
 - C ABI version: `10` in `include/dbs.h` as `DBS_ABI_VERSION`. This is the runtime binary compatibility contract and the shared-library `SOVERSION`.
 

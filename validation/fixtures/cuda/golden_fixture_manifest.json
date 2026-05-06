@@ -1,5 +1,5 @@
 {
-  "version": "1.0.0rc9",
+  "version": "1.0.0",
   "fixtures": [
     {"name": "forward_basic", "sha256": "TBD_CI_IMMUTABLE_FIXTURE_HASH"},
     {"name": "eos_variable_batch", "sha256": "TBD_CI_IMMUTABLE_FIXTURE_HASH"},
