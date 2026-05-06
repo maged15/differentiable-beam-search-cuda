@@ -37,7 +37,7 @@ typedef struct DBSOptionsC {
     float soft_topk_tolerance;
     int soft_topk_max_iters;
     int min_length;
-    int validate_inputs;
+    int validate_inputs;                /* 1 samples log_probs for NaN/+Inf rejection; it is not a full tensor scan */
     int64_t max_dense_gradient_elements;
     int reserved0;
     int reserved1;

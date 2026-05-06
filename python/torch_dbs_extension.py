@@ -29,6 +29,7 @@ except ImportError:  # pragma: no cover
     _cuda_ext = None
 
 _INT_MAX = 2_147_483_647
+_NATIVE_CUDA_FAST_MAX_BEAM = 32
 _NATIVE_CUDA_OPTION_NAMES = frozenset({
     "beam_size",
     "eos_token",
@@ -171,12 +172,22 @@ def _native_cuda_forward_supported(options: DBSOptions) -> bool:
 
     The CUDA C kernels implement hard final-score decoding with EOS/min-length
     support. Options that are validated or interpreted only by the CPU decoder
-    deliberately use the CPU semantic fallback for the public tensor API.
+    deliberately use the CPU semantic fallback for the public tensor API. K > 32
+    also falls back so public CUDA tensors do not hit the serial direct-C kernel.
     """
-    return _cuda_ext is not None and not _native_cuda_unsupported_options(options)
+    return (
+        _cuda_ext is not None
+        and options.beam_size <= _NATIVE_CUDA_FAST_MAX_BEAM
+        and not _native_cuda_unsupported_options(options)
+    )
 
 
 def _native_cuda_forward(x4: torch.Tensor, options: DBSOptions) -> torch.Tensor:
+    if options.beam_size > _NATIVE_CUDA_FAST_MAX_BEAM:
+        raise RuntimeError(
+            "internal error: beam_size reached native CUDA fast path above "
+            f"{_NATIVE_CUDA_FAST_MAX_BEAM}"
+        )
     unsupported = _native_cuda_unsupported_options(options)
     if unsupported:
         raise RuntimeError(

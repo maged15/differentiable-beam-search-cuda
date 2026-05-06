@@ -8,6 +8,7 @@ production JAX/XLA deployment should replace it with a registered XLA custom cal
 from __future__ import annotations
 
 import ctypes
+from functools import lru_cache
 import os
 from dataclasses import dataclass
 from typing import Optional, Tuple
@@ -16,8 +17,29 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+_DBS_ABI_VERSION = 10
+_DBS_OPTIONS_C_SIZE = 64
+_DBS_OPTIONS_C_OFFSETS = {
+    "beam_size": 0,
+    "eos_token": 4,
+    "selected_temperature": 8,
+    "soft_topk_temperature": 12,
+    "relaxed_pool_multiplier": 16,
+    "vocab_block": 20,
+    "length_penalty_alpha": 24,
+    "soft_topk_tolerance": 28,
+    "soft_topk_max_iters": 32,
+    "min_length": 36,
+    "validate_inputs": 40,
+    "_pad0": 44,
+    "max_dense_gradient_elements": 48,
+    "reserved0": 56,
+    "reserved1": 60,
+}
+
 
 class DBSOptionsC(ctypes.Structure):
+    # Mirrors DBSOptionsC from include/dbs.h exactly.
     _fields_ = [
         ("beam_size", ctypes.c_int),
         ("eos_token", ctypes.c_int),
@@ -30,10 +52,26 @@ class DBSOptionsC(ctypes.Structure):
         ("soft_topk_max_iters", ctypes.c_int),
         ("min_length", ctypes.c_int),
         ("validate_inputs", ctypes.c_int),
-        ("max_dense_gradient_elements", ctypes.c_int),
+        ("_pad0", ctypes.c_int),
+        ("max_dense_gradient_elements", ctypes.c_longlong),
         ("reserved0", ctypes.c_int),
         ("reserved1", ctypes.c_int),
     ]
+
+
+def _assert_options_c_layout() -> None:
+    actual_size = ctypes.sizeof(DBSOptionsC)
+    if actual_size != _DBS_OPTIONS_C_SIZE:
+        raise RuntimeError(f"DBSOptionsC ctypes size {actual_size} != ABI {_DBS_OPTIONS_C_SIZE}")
+    for name, expected_offset in _DBS_OPTIONS_C_OFFSETS.items():
+        actual_offset = getattr(DBSOptionsC, name).offset
+        if actual_offset != expected_offset:
+            raise RuntimeError(
+                f"DBSOptionsC.{name} offset {actual_offset} != ABI {expected_offset}"
+            )
+
+
+_assert_options_c_layout()
 
 
 @dataclass(frozen=True)
@@ -64,6 +102,7 @@ class DBSOptions:
             self.soft_topk_max_iters,
             self.min_length,
             self.validate_inputs,
+            0,
             self.max_dense_gradient_elements,
             0,
             0,
@@ -72,7 +111,14 @@ class DBSOptions:
 
 class _Lib:
     def __init__(self, path: Optional[str] = None) -> None:
-        self.lib = ctypes.CDLL(path or os.environ.get("DBS_LIBRARY", "libdbs.so"))
+        if path is None:
+            raise ValueError("path must be resolved before loading libdbs")
+        self.lib = ctypes.CDLL(path)
+        self.lib.dbs_abi_version.argtypes = []
+        self.lib.dbs_abi_version.restype = ctypes.c_int
+        abi = self.lib.dbs_abi_version()
+        if abi != _DBS_ABI_VERSION:
+            raise RuntimeError(f"libdbs ABI {abi} != expected {_DBS_ABI_VERSION}")
         self.lib.dbs_create.argtypes = [DBSOptionsC]
         self.lib.dbs_create.restype = ctypes.c_void_p
         self.lib.dbs_destroy.argtypes = [ctypes.c_void_p]
@@ -100,12 +146,21 @@ class _Lib:
         raise RuntimeError((msg or b"libdbs call failed").decode("utf-8", errors="replace"))
 
 
+def _resolve_library_path(path: Optional[str]) -> str:
+    return path if path is not None else os.environ.get("DBS_LIBRARY", "libdbs.so")
+
+
+@lru_cache(maxsize=None)
+def _get_lib(path: str) -> _Lib:
+    return _Lib(path)
+
+
 def _forward_np(x: np.ndarray, options: DBSOptions, lib_path: Optional[str]) -> np.ndarray:
     x = np.ascontiguousarray(x, dtype=np.float32)
     t, k, v = x.shape
     if k != options.beam_size:
         raise ValueError("shape[1] must equal options.beam_size")
-    dbs = _Lib(lib_path)
+    dbs = _get_lib(_resolve_library_path(lib_path))
     h = dbs.lib.dbs_create(options.as_c())
     if not h:
         raise RuntimeError("dbs_create failed")
@@ -124,7 +179,7 @@ def _backward_np(x: np.ndarray, g: np.ndarray, options: DBSOptions, lib_path: Op
     x = np.ascontiguousarray(x, dtype=np.float32)
     g = np.ascontiguousarray(g, dtype=np.float32)
     t, k, v = x.shape
-    dbs = _Lib(lib_path)
+    dbs = _get_lib(_resolve_library_path(lib_path))
     h = dbs.lib.dbs_create(options.as_c())
     if not h:
         raise RuntimeError("dbs_create failed")
@@ -135,10 +190,19 @@ def _backward_np(x: np.ndarray, g: np.ndarray, options: DBSOptions, lib_path: Op
         dbs.check(h, dbs.lib.dbs_backward(h, r, None, None, g.ctypes.data_as(ctypes.POINTER(ctypes.c_float)), ctypes.byref(b)))
         out = np.zeros((t * k * v,), dtype=np.float32)
         n = dbs.lib.dbs_backward_sparse_logprob_count(b)
+        if n < 0:
+            raise RuntimeError("sparse gradient count must be non-negative")
         idx = dbs.lib.dbs_backward_sparse_logprob_indices(b)
         val = dbs.lib.dbs_backward_sparse_logprob_values(b)
-        for i in range(n):
-            out[int(idx[i])] += float(val[i])
+        if n and (not idx or not val):
+            raise RuntimeError("sparse gradient buffers are null")
+        if n:
+            idx_arr = np.ctypeslib.as_array(idx, shape=(int(n),))
+            val_arr = np.ctypeslib.as_array(val, shape=(int(n),))
+            invalid = (idx_arr < 0) | (idx_arr >= out.size)
+            if bool(np.any(invalid)):
+                raise RuntimeError("sparse gradient index out of bounds")
+            np.add.at(out, idx_arr, val_arr)
         return out.reshape((t, k, v))
     finally:
         if b.value:

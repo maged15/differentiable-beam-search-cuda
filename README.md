@@ -139,7 +139,7 @@ The package includes both a ctypes wrapper (`python/torch_dbs.py`) and a compile
 - `[T, K, V] -> [K]` for one example
 - `[B, T, K, V] -> [B, K]` for batched examples
 
-CPU tensors support surrogate autograd for both shapes. CUDA tensors support the same public `final_scores()` options and gradients. For native-supported hard-forward options, CUDA kernels compute the forward pass; for options such as `length_penalty_alpha`, temperature fields, relaxed-pool sizing, or non-default validation-only knobs, the wrapper uses the CPU semantic implementation internally and returns CUDA tensors.
+CPU tensors support surrogate autograd for both shapes. CUDA tensors support the same public `final_scores()` options and gradients. For native-supported hard-forward options with `beam_size <= 32`, CUDA kernels compute the forward pass; larger beam sizes and options such as `length_penalty_alpha`, temperature fields, relaxed-pool sizing, or non-default validation-only knobs use the CPU semantic implementation internally and return CUDA tensors. The direct CUDA C API still exposes a serial correctness fallback for larger beams, but it is not a throughput path.
 
 Build the extension from the package root after building `libdbs`:
 

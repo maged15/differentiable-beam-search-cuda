@@ -143,6 +143,7 @@ def test_cuda_large_beam_backward_matches_cpu():
     x_cpu = torch.randn(1, 2, 33, 11, dtype=torch.float32)
     x_cpu = torch.log_softmax(x_cpu, dim=-1)
     grad_out = torch.linspace(-1.0, 1.0, 33, dtype=torch.float32).unsqueeze(0)
+    assert not dbs_ext._native_cuda_forward_supported(DBSOptions(beam_size=33, eos_token=-1, validate_inputs=1))
     _assert_cuda_matches_cpu_forward_backward(
         x_cpu,
         DBSOptions(beam_size=33, eos_token=-1, validate_inputs=1),
