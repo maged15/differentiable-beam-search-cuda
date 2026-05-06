@@ -320,24 +320,36 @@ def test_native_cuda_op_accepts_unbatched_shape_directly():
     torch.testing.assert_close(cuda_scores, cpu_scores, rtol=1e-5, atol=1e-5)
 
 
-def test_cuda_rejects_options_that_would_be_silently_ignored():
+def test_cuda_public_api_supports_non_default_options_with_cpu_semantic_parity():
     _require_cuda_ext()
-    x = torch.randn(4, 2, 128, device="cuda", dtype=torch.float32)
-    x = torch.log_softmax(x, dim=-1)
-    opts = DBSOptions(beam_size=2, eos_token=-1, length_penalty_alpha=0.2)
-    with pytest.raises(ValueError, match="unsupported CUDA options"):
-        final_scores(x, opts)
+    torch.manual_seed(616)
+    x_cpu = torch.randn(4, 2, 128, dtype=torch.float32)
+    x_cpu = torch.log_softmax(x_cpu, dim=-1)
+    opts = DBSOptions(
+        beam_size=2,
+        eos_token=-1,
+        selected_temperature=0.7,
+        soft_topk_temperature=0.4,
+        relaxed_pool_multiplier=3,
+        vocab_block=17,
+        length_penalty_alpha=0.2,
+        soft_topk_tolerance=1.0e-5,
+        soft_topk_max_iters=64,
+    )
+    cpu_scores = final_scores(x_cpu, opts).detach()
+    cuda_scores = final_scores(x_cpu.cuda(), opts).detach().cpu()
+    torch.testing.assert_close(cuda_scores, cpu_scores, rtol=1e-5, atol=1e-5)
 
 
 
-def test_cuda_public_api_rejects_invalid_shapes_and_options():
+def test_cuda_public_api_rejects_invalid_shapes_and_option_values():
     _require_cuda_ext()
     bad = torch.randn(0, 2, 8, device="cuda", dtype=torch.float32)
     with pytest.raises((ValueError, RuntimeError)):
         final_scores(bad, DBSOptions(beam_size=2))
     x = torch.randn(4, 2, 16, device="cuda", dtype=torch.float32)
-    with pytest.raises(ValueError, match="unsupported CUDA options"):
-        final_scores(x, DBSOptions(beam_size=2, selected_temperature=0.7))
+    with pytest.raises(RuntimeError, match="selected_temperature must be positive"):
+        final_scores(x, DBSOptions(beam_size=2, selected_temperature=-0.7))
 
 
 def test_cuda_rejects_beam_size_above_backend_limit():

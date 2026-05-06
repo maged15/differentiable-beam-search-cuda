@@ -3,7 +3,7 @@
 [![CI](https://github.com/maged15/differentiable-beam-search-cuda/actions/workflows/ci.yml/badge.svg)](https://github.com/maged15/differentiable-beam-search-cuda/actions/workflows/ci.yml)
 [![CUDA smoke](https://github.com/maged15/differentiable-beam-search-cuda/actions/workflows/cuda-smoke.yml/badge.svg)](https://github.com/maged15/differentiable-beam-search-cuda/actions/workflows/cuda-smoke.yml)
 
-This package is a v1.0 research library for hard beam search with sparse surrogate gradients. The public PyTorch API supports CPU surrogate autograd and CUDA hard forward decoding; the optional CUDA extension also provides limited selected-path sparse surrogate backward for `beam_size <= 32`. v1.0 adds hardware validation gates, allocator/reproducibility counters, an optional CUDA fast-kernel path, optional CUDA PyTorch extension source, ABI symbol checks, and clearer release criteria.
+This package is a v1.0 research library for hard beam search with sparse surrogate gradients. The public PyTorch API supports CPU surrogate autograd and CUDA tensors with CPU-equivalent semantics. Native CUDA kernels accelerate hard forward decoding for supported options; unsupported native CUDA options fall back to the CPU semantic implementation while returning CUDA outputs and gradients. v1.0 adds hardware validation gates, allocator/reproducibility counters, an optional CUDA fast-kernel path, optional CUDA PyTorch extension source, ABI symbol checks, and clearer release criteria.
 
 Production status: not production-certified until `scripts/run_hardware_validation.sh`, CUDA parity tests, SIMD parity tests, ABI checks, and sanitizer/fuzzer campaigns have passed on the intended deployment hardware.
 
@@ -139,7 +139,7 @@ The package includes both a ctypes wrapper (`python/torch_dbs.py`) and a compile
 - `[T, K, V] -> [K]` for one example
 - `[B, T, K, V] -> [B, K]` for batched examples
 
-CPU tensors support surrogate autograd for both shapes. CUDA tensors support hard forward decoding. When the optional CUDA extension is built, CUDA autograd also supports the selected-path sparse surrogate backward for `beam_size <= 32`; larger beams remain forward-only on CUDA.
+CPU tensors support surrogate autograd for both shapes. CUDA tensors support the same public `final_scores()` options and gradients. For native-supported hard-forward options, CUDA kernels compute the forward pass; for options such as `length_penalty_alpha`, temperature fields, relaxed-pool sizing, or non-default validation-only knobs, the wrapper uses the CPU semantic implementation internally and returns CUDA tensors.
 
 Build the extension from the package root after building `libdbs`:
 
@@ -166,8 +166,9 @@ batched_scores = final_scores(batched, DBSOptions(beam_size=K))  # [2, K]
 CUDA forward example:
 
 ```python
-x = torch.randn(2, T, K, V, device="cuda")
-y = final_scores(x, DBSOptions(beam_size=K))
+x = torch.randn(2, T, K, V, device="cuda", requires_grad=True)
+y = final_scores(x, DBSOptions(beam_size=K, length_penalty_alpha=0.2))
+y.sum().backward()
 ```
 
 End-to-end CPU toy training example:
@@ -218,13 +219,13 @@ Sparse backward latency is near-constant because it only needs to scatter `T×K`
 
 ## Gradient semantics
 
-Forward selection is hard and discontinuous. Backward is a surrogate: selected-beam weights use softmax over selected scores, and relaxed-pool weights use a sigmoid-bisection k-hot relaxation. These gradients are useful for surrogate-gradient training experiments, but they are not exact gradients of hard top-k beam selection.
+Forward selection is hard and discontinuous. Backward is a surrogate: the lower-level C backward APIs support selected-beam softmax weights and relaxed-pool sigmoid-bisection k-hot weights. The public PyTorch `final_scores()` backward differentiates the returned final scores through the selected trace, matching the CPU operator exactly for CPU and CUDA tensors. These gradients are useful for surrogate-gradient training experiments, but they are not exact gradients of hard top-k beam selection.
 
 Sparse gradients are flattened `[T * K * V]` indices plus values. Dense gradients are available only through `dbs_backward_dense()` and guarded by `max_dense_gradient_elements`.
 
 ## Current limitations
 
-- CUDA autograd backward is implemented for `beam_size <= DBS_CUDA_FAST_MAX_BEAM` (32 by default). It uses a softmax surrogate over the final beam scores, matching the CPU surrogate semantics. Parity tests against the CPU backward are in `python/tests/test_cuda_parity.py`. ROCm is not included.
+- CUDA `final_scores()` autograd is CPU-semantic-parity first: native CUDA forward is used where equivalent, and CPU fallback is used for unsupported native options or backward. Direct CUDA C sparse-backward helpers remain limited selected-path utilities and are not advertised as full CPU surrogate parity. ROCm is not included.
 - AVX2/SSE4.2/NEON optimized coverage differs by operation; NEON remains dot/softmax-oriented, while x86 SIMD covers vocabulary scanning where available.
 - PyTorch and JAX integrations are CPU-first. TensorFlow and ONNX Runtime are not included.
 - Model-step decoding is functional but recomputes partial prefixes to expose prior beam state; a fused incremental decoder should replace it for high-throughput production.
@@ -265,7 +266,7 @@ DBS_BUILD_TORCH_CUDA=1 pip install -e .
 python -m pytest python/tests/test_cuda_parity.py -q
 ```
 
-The CUDA forward path has exact and opt-in score-only fast paths. CUDA autograd backward remains disabled in the PyTorch wrapper until sparse surrogate-gradient parity is validated on GPU.
+The CUDA forward path has exact and opt-in score-only fast paths. Public PyTorch CUDA autograd uses CPU-equivalent semantic fallback for backward; native CUDA C sparse-backward helpers are still limited estimators for low-level validation.
 
 ## v1.0 release gate
 

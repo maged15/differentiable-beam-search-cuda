@@ -28,7 +28,7 @@ The public Python API accepts both unbatched and batched tensors on CPU and CUDA
 - `[T,K,V] -> [K]`
 - `[B,T,K,V] -> [B,K]`
 
-CUDA tensors support hard forward and limited selected-path sparse surrogate backward for `beam_size <= 32`; larger CUDA beams are forward-only. CPU tensors support the sparse surrogate backward across the full CPU option set.
+CUDA tensors support the same public `final_scores()` options and gradients as CPU tensors. Native CUDA kernels accelerate supported hard-forward cases; unsupported native CUDA options and CUDA backward use CPU semantic fallback internally and return CUDA tensors. CPU tensors support the sparse surrogate backward across the full CPU option set.
 
 ## ctypes wrapper
 
