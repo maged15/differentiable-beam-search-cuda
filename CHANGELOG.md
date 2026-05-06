@@ -1,61 +1,6 @@
 # Changelog
 
-Entries are ordered oldest to newest.
-
-## 0.3.0
-
-- Made `dbs_backward()` sparse by default. Dense gradients are opt-in through `dbs_backward_dense()` and remain protected by `max_dense_gradient_elements`.
-- Added model-step callback APIs: `dbs_decode_model_steps()` and `dbs_decode_model_steps_with_workspace()`.
-- Added reusable workspace APIs for callback decoding: `dbs_workspace_create()`, `dbs_workspace_reserve()`, and `dbs_workspace_allocated_bytes()`.
-- Added variable batch decode with per-example steps, beam sizes, EOS tokens, min lengths, banned tokens, and forced tokens.
-- Added advanced constraints: repetition penalty, no-repeat n-gram, and token-filter callback via `DBSAdvancedConstraintsC`.
-- Added observability through `DBSStatsC`: selected kernel, sparse/dense backward mode, model-step usage, timing, allocation estimate, result sizes, sparse nnz, and error category.
-- Added CPU feature discovery plus AVX2/SSE4.2/NEON helper kernels for dot/softmax normalization paths.
-- Added PyTorch C++ extension packaging plus a `torch.autograd.Function` wrapper.
-- Added JAX `custom_vjp` host-callback wrapper for CPU validation.
-- Expanded C++ tests, benchmark coverage, CI, and docs.
-
-## 0.4.0
-
-- Replaced the CUDA scaffold with real CUDA source kernels for batched hard forward decode and sparse backward scatter.
-- Added typed FP16/BF16 decode APIs.
-- Added native `torch.ops.dbs` source.
-- Added the toy training example, benchmark scaffolds, export map, and extended docs.
-
-## 1.0.0rc1
-
-- Added `make cuda-validate`, `make soak`, `make long-fuzz`, `make perf-gate`, and `make release-artifacts`.
-- Added CUDA scheduled/self-hosted benchmark workflow.
-- Added fuzz/soak workflow and release artifact workflow.
-- Added performance threshold validation for CUDA parity and speed regressions.
-- Added soak-test script for determinism and memory-growth checks.
-- Added runnable CPU, CUDA, and benchmark reproduction examples.
-- Added supported-platforms, known-limitations, and performance-threshold docs.
-- Added issue templates, pull request template, contributing guide, code of conduct, and security policy.
-- Added extra constraint tests for banned-token and forced-token behavior.
-
-## 1.0.0rc8
-
-- Added cooperative CUDA fast forward kernel API (`dbs_cuda_decode_forward_fast`) alongside the serial correctness CUDA kernel and sparse scatter kernel.
-- Added optional CUDA PyTorch extension source and CUDA/CPU parity pytest gate.
-- Added allocator counters, deterministic seed recording APIs, and expanded JSON stats.
-- Added ABI symbol check, hardware validation script, fuzz campaign script, and package manifest.
-- Added CI hooks for hardware validation and sanitizer/fuzzer campaigns.
-- Added tests for allocator counters, deterministic seed recording, and JSON stats fields.
-- Added exported result observability APIs: EOS count, deterministic-order validation, and JSON result summaries.
-- Added production gate manifest validation API and required/template manifests.
-- Added fail-closed release gate script covering CPU tests, ABI exact/compat checks, wheels, CUDA parity, benchmarks, and fuzz/sanitizer campaigns.
-- Added ABI symbol manifests for v0.5 and v1.0 and backwards-compatible symbol checks.
-- Added FP16 decode, dense backward memory-cap, summary JSON, and gate-manifest tests.
-- Added fail-closed production approval gate requiring CI-produced evidence only.
-- Added independent review attestations for API/ABI, security, numerical correctness, performance, and ML integration.
-- Added mandatory release artifacts for signed wheels/libraries, SBOM, provenance, vulnerability/license scans, CUDA raw logs, fuzz/sanitizer artifacts, and soak/SLO artifacts.
-- Added frozen supported platform matrix lock and canary/rollback guidance.
-- Fixed CUDA public API shape handling at the native extension boundary, including direct native CUDA calls with `[T,K,V]`.
-- Rejected unsupported non-default CUDA decoder options instead of silently ignoring them.
-- Corrected README C API backward/free ordering.
-- Reconfirmed MIT license text and explicit Python/CMake/C ABI version separation.
-- Updated docs to distinguish locally validated CPU features from hardware-dependent CUDA/SIMD validation gates.
+Entries are ordered newest to oldest so the first version heading is the current release checked by `scripts/check_version_metadata.py`.
 
 ## 1.0.0
 
@@ -86,3 +31,58 @@ Entries are ordered oldest to newest.
 - Version metadata uses `VERSION` as the source of truth for Python packaging; `pyproject.toml` declares the version as dynamic.
 - CMake library `VERSION` remains `1.0.0`, and shared-library `SOVERSION` follows C ABI `10`.
 - Versioning docs explicitly separate Python package version, CMake library version, and C ABI version.
+
+## 1.0.0rc8
+
+- Added cooperative CUDA fast forward kernel API (`dbs_cuda_decode_forward_fast`) alongside the serial correctness CUDA kernel and sparse scatter kernel.
+- Added optional CUDA PyTorch extension source and CUDA/CPU parity pytest gate.
+- Added allocator counters, deterministic seed recording APIs, and expanded JSON stats.
+- Added ABI symbol check, hardware validation script, fuzz campaign script, and package manifest.
+- Added CI hooks for hardware validation and sanitizer/fuzzer campaigns.
+- Added tests for allocator counters, deterministic seed recording, and JSON stats fields.
+- Added exported result observability APIs: EOS count, deterministic-order validation, and JSON result summaries.
+- Added production gate manifest validation API and required/template manifests.
+- Added fail-closed release gate script covering CPU tests, ABI exact/compat checks, wheels, CUDA parity, benchmarks, and fuzz/sanitizer campaigns.
+- Added ABI symbol manifests for v0.5 and v1.0 and backwards-compatible symbol checks.
+- Added FP16 decode, dense backward memory-cap, summary JSON, and gate-manifest tests.
+- Added fail-closed production approval gate requiring CI-produced evidence only.
+- Added independent review attestations for API/ABI, security, numerical correctness, performance, and ML integration.
+- Added mandatory release artifacts for signed wheels/libraries, SBOM, provenance, vulnerability/license scans, CUDA raw logs, fuzz/sanitizer artifacts, and soak/SLO artifacts.
+- Added frozen supported platform matrix lock and canary/rollback guidance.
+- Fixed CUDA public API shape handling at the native extension boundary, including direct native CUDA calls with `[T,K,V]`.
+- Rejected unsupported non-default CUDA decoder options instead of silently ignoring them.
+- Corrected README C API backward/free ordering.
+- Reconfirmed MIT license text and explicit Python/CMake/C ABI version separation.
+- Updated docs to distinguish locally validated CPU features from hardware-dependent CUDA/SIMD validation gates.
+
+## 1.0.0rc1
+
+- Added `make cuda-validate`, `make soak`, `make long-fuzz`, `make perf-gate`, and `make release-artifacts`.
+- Added CUDA scheduled/self-hosted benchmark workflow.
+- Added fuzz/soak workflow and release artifact workflow.
+- Added performance threshold validation for CUDA parity and speed regressions.
+- Added soak-test script for determinism and memory-growth checks.
+- Added runnable CPU, CUDA, and benchmark reproduction examples.
+- Added supported-platforms, known-limitations, and performance-threshold docs.
+- Added issue templates, pull request template, contributing guide, code of conduct, and security policy.
+- Added extra constraint tests for banned-token and forced-token behavior.
+
+## 0.4.0
+
+- Replaced the CUDA scaffold with real CUDA source kernels for batched hard forward decode and sparse backward scatter.
+- Added typed FP16/BF16 decode APIs.
+- Added native `torch.ops.dbs` source.
+- Added the toy training example, benchmark scaffolds, export map, and extended docs.
+
+## 0.3.0
+
+- Made `dbs_backward()` sparse by default. Dense gradients are opt-in through `dbs_backward_dense()` and remain protected by `max_dense_gradient_elements`.
+- Added model-step callback APIs: `dbs_decode_model_steps()` and `dbs_decode_model_steps_with_workspace()`.
+- Added reusable workspace APIs for callback decoding: `dbs_workspace_create()`, `dbs_workspace_reserve()`, and `dbs_workspace_allocated_bytes()`.
+- Added variable batch decode with per-example steps, beam sizes, EOS tokens, min lengths, banned tokens, and forced tokens.
+- Added advanced constraints: repetition penalty, no-repeat n-gram, and token-filter callback via `DBSAdvancedConstraintsC`.
+- Added observability through `DBSStatsC`: selected kernel, sparse/dense backward mode, model-step usage, timing, allocation estimate, result sizes, sparse nnz, and error category.
+- Added CPU feature discovery plus AVX2/SSE4.2/NEON helper kernels for dot/softmax normalization paths.
+- Added PyTorch C++ extension packaging plus a `torch.autograd.Function` wrapper.
+- Added JAX `custom_vjp` host-callback wrapper for CPU validation.
+- Expanded C++ tests, benchmark coverage, CI, and docs.
