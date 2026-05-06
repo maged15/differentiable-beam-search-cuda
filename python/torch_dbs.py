@@ -17,6 +17,9 @@ import torch
 
 
 class DBSOptionsC(ctypes.Structure):
+    # Mirrors DBSOptionsC from include/dbs.h exactly.
+    # max_dense_gradient_elements is int64_t; the compiler inserts 4 bytes of
+    # padding after validate_inputs (offset 40) to align the 8-byte field.
     _fields_ = [
         ("beam_size", ctypes.c_int),
         ("eos_token", ctypes.c_int),
@@ -29,7 +32,8 @@ class DBSOptionsC(ctypes.Structure):
         ("soft_topk_max_iters", ctypes.c_int),
         ("min_length", ctypes.c_int),
         ("validate_inputs", ctypes.c_int),
-        ("max_dense_gradient_elements", ctypes.c_int),
+        ("_pad0", ctypes.c_int),
+        ("max_dense_gradient_elements", ctypes.c_longlong),
         ("reserved0", ctypes.c_int),
         ("reserved1", ctypes.c_int),
     ]
@@ -63,6 +67,7 @@ class DBSOptions:
             self.soft_topk_max_iters,
             self.min_length,
             self.validate_inputs,
+            0,  # _pad0: implicit C alignment padding
             self.max_dense_gradient_elements,
             0,
             0,
@@ -151,25 +156,39 @@ class _DBSFinalScores(torch.autograd.Function):
 
         x = log_probs.contiguous()
         T, _, V = x.shape
+        if options.eos_token < -1:
+            raise ValueError("eos_token must be -1 or non-negative")
+        if options.eos_token >= V:
+            raise ValueError("eos_token must be less than log_probs.shape[2]")
         dbs = _DBSLib(lib_path)
         handle = dbs.lib.dbs_create(options.as_c())
         if not handle:
             raise RuntimeError("dbs_create failed")
 
         result = ctypes.c_void_p()
-        ptr = x.data_ptr()
-        code = dbs.lib.dbs_decode(handle, ctypes.cast(ptr, ctypes.POINTER(ctypes.c_float)), T, V, ctypes.byref(result))
-        dbs.check(handle, code)
+        try:
+            ptr = x.data_ptr()
+            code = dbs.lib.dbs_decode(handle, ctypes.cast(ptr, ctypes.POINTER(ctypes.c_float)), T, V, ctypes.byref(result))
+            dbs.check(handle, code)
 
-        final_ptr = dbs.lib.dbs_result_final_scores(result)
-        out = torch.empty((options.beam_size,), dtype=torch.float32)
-        for i in range(options.beam_size):
-            out[i] = final_ptr[i]
+            final_ptr = dbs.lib.dbs_result_final_scores(result)
+            if not final_ptr:
+                raise RuntimeError("dbs_result_final_scores returned null")
+            final_buf = (ctypes.c_float * options.beam_size).from_address(ctypes.addressof(final_ptr.contents))
+            out = torch.frombuffer(final_buf, dtype=torch.float32, count=options.beam_size).clone()
 
-        ctx.state = _CState(dbs, handle, result.value)
-        ctx.shape = tuple(x.shape)
-        ctx.options = options
-        return out
+            state = _CState(dbs, handle, result.value)
+            handle = 0
+            result = ctypes.c_void_p()
+            ctx.state = state
+            ctx.shape = tuple(x.shape)
+            ctx.options = options
+            return out
+        finally:
+            if result.value:
+                dbs.lib.dbs_free_result(result)
+            if handle:
+                dbs.lib.dbs_destroy(handle)
 
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor):
@@ -178,19 +197,34 @@ class _DBSFinalScores(torch.autograd.Function):
         grad_output = grad_output.detach().contiguous().to(dtype=torch.float32, device="cpu")
         grad_final = ctypes.cast(grad_output.data_ptr(), ctypes.POINTER(ctypes.c_float))
         backward = ctypes.c_void_p()
-        code = dbs.lib.dbs_backward(state.handle, state.result, None, None, grad_final, ctypes.byref(backward))
-        dbs.check(state.handle, code)
+        try:
+            code = dbs.lib.dbs_backward(state.handle, state.result, None, None, grad_final, ctypes.byref(backward))
+            dbs.check(state.handle, code)
 
-        T, K, V = ctx.shape
-        grad = torch.zeros((T * K * V,), dtype=torch.float32)
-        n = dbs.lib.dbs_backward_sparse_logprob_count(backward)
-        idx = dbs.lib.dbs_backward_sparse_logprob_indices(backward)
-        val = dbs.lib.dbs_backward_sparse_logprob_values(backward)
-        for i in range(n):
-            grad[int(idx[i])] += float(val[i])
-        dbs.lib.dbs_free_backward(backward)
-        state.close()
-        return grad.reshape((T, K, V)), None, None
+            T, K, V = ctx.shape
+            grad = torch.zeros((T * K * V,), dtype=torch.float32)
+            grad_numel = grad.numel()
+            n = dbs.lib.dbs_backward_sparse_logprob_count(backward)
+            if n < 0:
+                raise RuntimeError("sparse gradient count must be non-negative")
+            idx = dbs.lib.dbs_backward_sparse_logprob_indices(backward)
+            val = dbs.lib.dbs_backward_sparse_logprob_values(backward)
+            if n and (not idx or not val):
+                raise RuntimeError("sparse gradient buffers are null")
+            if n:
+                idx_buf = (ctypes.c_longlong * n).from_address(ctypes.addressof(idx.contents))
+                val_buf = (ctypes.c_float * n).from_address(ctypes.addressof(val.contents))
+                idx_tensor = torch.frombuffer(idx_buf, dtype=torch.int64, count=n)
+                val_tensor = torch.frombuffer(val_buf, dtype=torch.float32, count=n)
+                invalid = (idx_tensor < 0) | (idx_tensor >= grad_numel)
+                if torch.any(invalid).item():
+                    raise RuntimeError("sparse gradient index out of bounds")
+                grad.scatter_add_(0, idx_tensor, val_tensor)
+            return grad.reshape((T, K, V)), None, None
+        finally:
+            if backward.value:
+                dbs.lib.dbs_free_backward(backward)
+            state.close()
 
 
 def final_scores(log_probs: torch.Tensor, options: DBSOptions, lib_path: Optional[str] = None) -> torch.Tensor:

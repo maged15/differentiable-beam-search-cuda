@@ -38,7 +38,7 @@ typedef struct DBSOptionsC {
     int soft_topk_max_iters;
     int min_length;
     int validate_inputs;
-    int max_dense_gradient_elements;
+    int64_t max_dense_gradient_elements;
     int reserved0;
     int reserved1;
 } DBSOptionsC;

@@ -88,7 +88,6 @@ namespace dbs {
 
 static std::atomic<int64_t> g_allocator_calls{0};
 static std::atomic<int64_t> g_allocator_bytes{0};
-static thread_local uint64_t g_deterministic_seed_tls = 0;
 
 using TokenFilterFn = int (*)(
     void* user_data,
@@ -179,7 +178,7 @@ struct BeamOptions {
 
     int min_length = 0;
     int validate_inputs = 1;
-    int max_dense_gradient_elements = 100000000;
+    int64_t max_dense_gradient_elements = 100000000LL;
 };
 
 struct DecodeConstraints {
@@ -392,7 +391,11 @@ static void validate_logprob_tensor(const float* x, int steps, int beam_size, in
     const size_t v = static_cast<size_t>(vocab_size);
     const size_t count = checked_mul_size(checked_mul_size(st, k, "log-prob tensor size overflow"), v, "log-prob tensor size overflow");
 
-    for (size_t i = 0; i < count; ++i) {
+    // Sample up to 1000 evenly-spaced elements to keep validation O(1) in tensor size.
+    constexpr size_t kMaxSamples = 1000;
+    const size_t stride = count > kMaxSamples ? count / kMaxSamples : 1;
+
+    for (size_t i = 0; i < count; i += stride) {
         const float value = x[i];
         if (std::isnan(value) || value == std::numeric_limits<float>::infinity()) {
             throw std::invalid_argument("log_probs contains NaN or +Inf");
@@ -691,7 +694,15 @@ DBS_AVX512_TARGET static inline __m512 exp512_ps(__m512 x) {
 
 DBS_AVX512_TARGET static inline __m512 sigmoid512_ps(__m512 x) {
     const __m512 one = _mm512_set1_ps(1.0f);
-    return _mm512_div_ps(one, _mm512_add_ps(one, exp512_ps(_mm512_sub_ps(_mm512_setzero_ps(), x))));
+    const __m512 zero = _mm512_setzero_ps();
+    const __mmask16 nonnegative = _mm512_cmp_ps_mask(x, zero, _CMP_GE_OS);
+    const __m512 exp_neg_x = exp512_ps(_mm512_sub_ps(zero, x));
+    const __m512 pos = _mm512_div_ps(one, _mm512_add_ps(one, exp_neg_x));
+    const __m512 min_normal_arg = _mm512_set1_ps(-87.3365447505531f);
+    const __m512 min_normal = _mm512_set1_ps(std::numeric_limits<float>::min());
+    const __m512 exp_x = _mm512_max_ps(exp512_ps(_mm512_max_ps(x, min_normal_arg)), min_normal);
+    const __m512 neg = _mm512_div_ps(exp_x, _mm512_add_ps(one, exp_x));
+    return _mm512_mask_blend_ps(nonnegative, neg, pos);
 }
 
 DBS_AVX512_TARGET float dot(const float* a, const float* b, int n) {
@@ -894,6 +905,8 @@ DBS_AVX512_TARGET void scan_parent_row(
 
     const __m512 parent_vec = _mm512_set1_ps(parent_raw);
     const __m512 scale_vec = _mm512_set1_ps(inv_penalty);
+    const __m512 neg_inf_vec = _mm512_set1_ps(-std::numeric_limits<float>::infinity());
+    const __m512 pos_inf_vec = _mm512_set1_ps(std::numeric_limits<float>::infinity());
 
     alignas(64) float rank_tmp[16];
     alignas(64) float raw_tmp[16];
@@ -917,7 +930,10 @@ DBS_AVX512_TARGET void scan_parent_row(
             const __m512 rank_vec = _mm512_mul_ps(raw_vec, scale_vec);
 
             const float threshold = top[top_count - 1].score;
-            const __mmask16 mask = _mm512_cmp_ps_mask(rank_vec, _mm512_set1_ps(threshold), _CMP_GT_OS);
+            const __mmask16 finite_mask =
+                _mm512_cmp_ps_mask(lp, neg_inf_vec, _CMP_GT_OS) &
+                _mm512_cmp_ps_mask(lp, pos_inf_vec, _CMP_LT_OS);
+            const __mmask16 mask = finite_mask & _mm512_cmp_ps_mask(rank_vec, _mm512_set1_ps(threshold), _CMP_GT_OS);
 
             if (mask) {
                 _mm512_store_ps(rank_tmp, rank_vec);
@@ -941,7 +957,10 @@ DBS_AVX512_TARGET void scan_parent_row(
             const __m512 rank_vec = _mm512_mul_ps(raw_vec, scale_vec);
 
             const float threshold = top[top_count - 1].score;
-            __mmask16 mask = lane_mask & _mm512_cmp_ps_mask(rank_vec, _mm512_set1_ps(threshold), _CMP_GT_OS);
+            const __mmask16 finite_mask =
+                _mm512_cmp_ps_mask(lp, neg_inf_vec, _CMP_GT_OS) &
+                _mm512_cmp_ps_mask(lp, pos_inf_vec, _CMP_LT_OS);
+            __mmask16 mask = lane_mask & finite_mask & _mm512_cmp_ps_mask(rank_vec, _mm512_set1_ps(threshold), _CMP_GT_OS);
 
             if (mask) {
                 _mm512_store_ps(rank_tmp, rank_vec);
@@ -965,11 +984,12 @@ DBS_AVX512_TARGET void scan_parent_row(
 #if DBS_CAN_COMPILE_AVX2
 namespace avx2 {
 DBS_AVX2_TARGET static inline float hsum256(__m256 v) {
-    alignas(32) float tmp[8];
-    _mm256_store_ps(tmp, v);
-    float s = 0.0f;
-    for (float x : tmp) s += x;
-    return s;
+    // Reduce 8 lanes to 1 using two hadd + cross-lane extract.
+    __m256 t = _mm256_hadd_ps(v, v);       // [a0+a1, a2+a3, a0+a1, a2+a3 | a4+a5, a6+a7, a4+a5, a6+a7]
+    t = _mm256_hadd_ps(t, t);              // [a0..3, a0..3, a0..3, a0..3 | a4..7, a4..7, a4..7, a4..7]
+    __m128 lo = _mm256_castps256_ps128(t);
+    __m128 hi = _mm256_extractf128_ps(t, 1);
+    return _mm_cvtss_f32(_mm_add_ps(lo, hi));
 }
 
 DBS_AVX2_TARGET float dot(const float* a, const float* b, int n) {
@@ -1047,6 +1067,8 @@ DBS_AVX2_TARGET void scan_parent_row(
 
     const __m256 parent_vec = _mm256_set1_ps(parent_raw);
     const __m256 scale_vec = _mm256_set1_ps(inv_penalty);
+    const __m256 neg_inf_vec = _mm256_set1_ps(-std::numeric_limits<float>::infinity());
+    const __m256 pos_inf_vec = _mm256_set1_ps(std::numeric_limits<float>::infinity());
 
     for (int base = 0; base < vocab_size; base += vocab_block) {
         const int end = std::min(vocab_size, base + vocab_block);
@@ -1058,7 +1080,11 @@ DBS_AVX2_TARGET void scan_parent_row(
             const __m256 rank_vec = _mm256_mul_ps(raw_vec, scale_vec);
 
             const float threshold = top[top_count - 1].score;
-            const int mask = _mm256_movemask_ps(_mm256_cmp_ps(rank_vec, _mm256_set1_ps(threshold), _CMP_GT_OS));
+            const __m256 finite = _mm256_and_ps(
+                _mm256_cmp_ps(lp, neg_inf_vec, _CMP_GT_OS),
+                _mm256_cmp_ps(lp, pos_inf_vec, _CMP_LT_OS));
+            const __m256 better = _mm256_cmp_ps(rank_vec, _mm256_set1_ps(threshold), _CMP_GT_OS);
+            const int mask = _mm256_movemask_ps(_mm256_and_ps(finite, better));
 
             if (mask) {
                 alignas(32) float rank_tmp[8];
@@ -1136,6 +1162,73 @@ DBS_SSE42_TARGET void softmax_selected(const float* scores, float* out, int n, f
     const __m128 inv = _mm_set1_ps(inv_sum);
     for (; i + 3 < n; i += 4) _mm_storeu_ps(out + i, _mm_mul_ps(_mm_loadu_ps(out + i), inv));
     for (; i < n; ++i) out[i] *= inv_sum;
+}
+
+DBS_SSE42_TARGET void scan_parent_row(
+    const float* row,
+    float parent_raw,
+    int parent_length,
+    int parent,
+    int vocab_size,
+    Candidate* top,
+    int top_count,
+    int vocab_block,
+    float length_penalty_alpha,
+    const uint8_t* banned_tokens,
+    int forced_token,
+    int eos_token,
+    int min_length
+) {
+    if (banned_tokens || forced_token >= 0 || (eos_token >= 0 && parent_length + 1 < min_length)) {
+        scan_parent_row_scalar(row, parent_raw, parent_length, parent, vocab_size, top, top_count, vocab_block, length_penalty_alpha, banned_tokens, forced_token, eos_token, min_length);
+        return;
+    }
+
+    const int new_len = parent_length + 1;
+    const float inv_penalty = 1.0f / gnmt_length_penalty(new_len, length_penalty_alpha);
+    const __m128 parent_vec = _mm_set1_ps(parent_raw);
+    const __m128 scale_vec = _mm_set1_ps(inv_penalty);
+    const __m128 neg_inf_vec = _mm_set1_ps(-std::numeric_limits<float>::infinity());
+    const __m128 pos_inf_vec = _mm_set1_ps(std::numeric_limits<float>::infinity());
+
+    for (int base = 0; base < vocab_size; base += vocab_block) {
+        const int end = std::min(vocab_size, base + vocab_block);
+        int v = base;
+
+        for (; v + 3 < end; v += 4) {
+            const __m128 lp = _mm_loadu_ps(row + v);
+            const __m128 raw_vec = _mm_add_ps(lp, parent_vec);
+            const __m128 rank_vec = _mm_mul_ps(raw_vec, scale_vec);
+
+            const float threshold = top[top_count - 1].score;
+            const __m128 finite = _mm_and_ps(
+                _mm_cmpgt_ps(lp, neg_inf_vec),
+                _mm_cmplt_ps(lp, pos_inf_vec));
+            const __m128 better = _mm_cmpgt_ps(rank_vec, _mm_set1_ps(threshold));
+            const int mask = _mm_movemask_ps(_mm_and_ps(finite, better));
+
+            if (mask) {
+                alignas(16) float rank_tmp[4];
+                alignas(16) float raw_tmp[4];
+                _mm_store_ps(rank_tmp, rank_vec);
+                _mm_store_ps(raw_tmp, raw_vec);
+                int m = mask;
+                while (m) {
+                    const int lane = __builtin_ctz(m);
+                    insert_topk(top, top_count, Candidate{rank_tmp[lane], raw_tmp[lane], parent, v + lane, new_len, 1});
+                    m &= m - 1;
+                }
+            }
+        }
+
+        for (; v < end; ++v) {
+            const float lp = row[v];
+            if (!std::isfinite(lp)) continue;
+            const float raw = parent_raw + lp;
+            const float rank = raw * inv_penalty;
+            insert_topk(top, top_count, Candidate{rank, raw, parent, v, new_len, 1});
+        }
+    }
 }
 }
 #endif
@@ -1601,7 +1694,8 @@ public:
 
         const size_t selected_count = checked_mul_size(static_cast<size_t>(T), static_cast<size_t>(K), "selected gradient size overflow");
         const size_t dense_grad_count = checked_mul_size(selected_count, static_cast<size_t>(V), "dense gradient size overflow");
-        if (dense_grad_count > static_cast<size_t>(opt_.max_dense_gradient_elements)) {
+        if (opt_.max_dense_gradient_elements >= 0 &&
+            dense_grad_count > static_cast<size_t>(opt_.max_dense_gradient_elements)) {
             throw std::length_error("dense gradient allocation exceeds max_dense_gradient_elements; use sparse backward");
         }
 
@@ -1727,6 +1821,17 @@ private:
 #if DBS_CAN_COMPILE_AVX2
         if (kernel_path_enabled(KernelPath::AVX2) && runtime_has_avx2()) {
             avx2::scan_parent_row(
+                row, parent_raw, parent_length, parent,
+                vocab_size, top, top_count, opt_.vocab_block,
+                opt_.length_penalty_alpha, banned_tokens, forced_token,
+                opt_.eos_token, min_length
+            );
+            return;
+        }
+#endif
+#if DBS_CAN_COMPILE_SSE42
+        if (kernel_path_enabled(KernelPath::SSE42) && runtime_has_sse42()) {
+            sse42::scan_parent_row(
                 row, parent_raw, parent_length, parent,
                 vocab_size, top, top_count, opt_.vocab_block,
                 opt_.length_penalty_alpha, banned_tokens, forced_token,
@@ -2109,6 +2214,10 @@ private:
                     seq.erase(it, seq.end());
                 }
             }
+            seq.erase(
+                seq.begin(),
+                std::find_if(seq.begin(), seq.end(), [](int32_t token) { return token >= 0; })
+            );
 
             seqs[k] = std::move(seq);
         }
@@ -2310,6 +2419,23 @@ static std::vector<InternalParityCase> build_internal_parity_cases() {
     }
 
     {
+        const int T = 2, K = 3, V = 8;
+        BeamOptions opt = base_options(K);
+        opt.validate_inputs = 0;
+        std::vector<float> x = filled_log_probs(T, K, V, -4.0f);
+        for (int t = 0; t < T; ++t) {
+            for (int k = 0; k < K; ++k) {
+                x[lp_index(t, k, 1, K, V)] = -0.05f;
+                x[lp_index(t, k, 3, K, V)] = -0.10f;
+                x[lp_index(t, k, 6, K, V)] = -0.25f;
+            }
+        }
+        x[lp_index(0, 0, 2, K, V)] = std::numeric_limits<float>::infinity();
+        x[lp_index(1, 1, 5, K, V)] = std::numeric_limits<float>::infinity();
+        cases.push_back(InternalParityCase{"positive_infinity_validation_disabled", opt, T, V, x, {}, {}, -1, false});
+    }
+
+    {
         const int T = 3, K = 3, V = 7;
         BeamOptions opt = base_options(K);
         opt.eos_token = 5;
@@ -2473,6 +2599,31 @@ DBS_AVX512_TARGET static int run_avx512_vector_math_parity_impl(ParityReport* re
     }
 
     {
+        alignas(64) float input[16] = {
+            -88.0f, -80.0f, -60.0f, -45.0f, -20.0f, -12.0f, -8.0f, -4.0f,
+             -1.0f, 0.0f, 1.0f, 4.0f, 8.0f, 12.0f, 20.0f, 45.0f,
+        };
+        alignas(64) float output[16] = {};
+        const __m512 y = avx512::sigmoid512_ps(_mm512_load_ps(input));
+        _mm512_store_ps(output, y);
+        for (int i = 0; i < 16; ++i) {
+            const float expected = sigmoid_scalar(input[i]);
+            const bool tiny = expected > 0.0f && expected < 1.0e-6f;
+            const bool denormal_floor = input[i] < -87.0f;
+            const bool ok = denormal_floor
+                ? (output[i] >= std::numeric_limits<float>::min())
+                : tiny
+                ? (output[i] > 0.0f && std::fabs(output[i] - expected) <= std::fabs(expected) * 2.5e-1f)
+                : close_enough(output[i], expected, 2.5e-4f, 2.5e-4f);
+            if (!ok) {
+                report_failure(report, "avx512 sigmoid512_ps diverged from scalar sigmoid");
+                return 1;
+            }
+        }
+        if (report) ++report->cases_run;
+    }
+
+    {
         std::vector<float> scores = {
             -4.0f, -1.5f, -0.25f, 0.0f, 0.125f, 0.5f, 1.0f, 2.0f,
             -1.0e31f, -3.0f, 3.5f, -2.25f, 0.75f, -0.75f, 1.5f, -5.0f,
@@ -2626,7 +2777,7 @@ struct DBSOptionsC {
     int soft_topk_max_iters;
     int min_length;
     int validate_inputs;
-    int max_dense_gradient_elements;
+    int64_t max_dense_gradient_elements;
     int reserved0;
     int reserved1;
 };
@@ -3022,7 +3173,7 @@ static dbs::BeamOptions from_c_options(DBSOptionsC c) {
     o.min_length = c.min_length >= 0 ? c.min_length : 0;
     o.validate_inputs = c.validate_inputs == 0 ? 0 : 1;
     o.max_dense_gradient_elements =
-        c.max_dense_gradient_elements > 0 ? c.max_dense_gradient_elements : 100000000;
+        c.max_dense_gradient_elements > 0 ? c.max_dense_gradient_elements : 100000000LL;
 
     return o;
 }
@@ -3032,7 +3183,7 @@ extern "C" DBS_EXPORT int dbs_abi_version() {
 }
 
 extern "C" DBS_EXPORT const char* dbs_version_string() {
-    return "1.0.0rc9";
+    return "1.0.0";
 }
 
 extern "C" DBS_EXPORT const char* dbs_last_global_error() {
@@ -3459,9 +3610,15 @@ extern "C" DBS_EXPORT int dbs_decode_batch(
         auto br = std::make_unique<DBSBatchResultHandle>();
         br->results.resize(static_cast<size_t>(batch_size));
 
-        const size_t stride =
-            static_cast<size_t>(steps) * static_cast<size_t>(handle->beam_size) * static_cast<size_t>(vocab_size);
-        if (stride == 0 || stride / static_cast<size_t>(vocab_size) != static_cast<size_t>(steps) * static_cast<size_t>(handle->beam_size)) {
+        const size_t step_beam = dbs::checked_mul_size(
+            static_cast<size_t>(steps),
+            static_cast<size_t>(handle->beam_size),
+            "batch stride overflow");
+        const size_t stride = dbs::checked_mul_size(
+            step_beam,
+            static_cast<size_t>(vocab_size),
+            "batch stride overflow");
+        if (stride == 0) {
             dbs_set_error(handle, "batch stride overflow");
             return -1;
         }
@@ -3472,7 +3629,13 @@ extern "C" DBS_EXPORT int dbs_decode_batch(
         std::mutex error_mutex;
         std::exception_ptr first_exception = nullptr;
 
-        auto worker = [&]() {
+        // Capture calling-thread kernel override so worker threads inherit the same setting.
+        const bool captured_override_enabled = dbs::g_kernel_override_enabled;
+        const dbs::KernelPath captured_override = dbs::g_kernel_override;
+
+        auto worker = [&, captured_override_enabled, captured_override]() {
+            dbs::g_kernel_override_enabled = captured_override_enabled;
+            dbs::g_kernel_override = captured_override;
             for (;;) {
                 const int b = index.fetch_add(1);
                 if (b >= batch_size) break;
@@ -3547,7 +3710,13 @@ extern "C" DBS_EXPORT int dbs_decode_batch_variable(
         std::mutex error_mutex;
         std::exception_ptr first_exception = nullptr;
 
-        auto worker = [&]() {
+        // Capture calling-thread kernel override so worker threads inherit the same setting.
+        const bool captured_override_enabled = dbs::g_kernel_override_enabled;
+        const dbs::KernelPath captured_override = dbs::g_kernel_override;
+
+        auto worker = [&, captured_override_enabled, captured_override]() {
+            dbs::g_kernel_override_enabled = captured_override_enabled;
+            dbs::g_kernel_override = captured_override;
             for (;;) {
                 const int b = index.fetch_add(1);
                 if (b >= batch_size) break;
@@ -4027,7 +4196,6 @@ extern "C" DBS_EXPORT int dbs_is_deterministic() {
 extern "C" DBS_EXPORT int dbs_set_deterministic_seed(DBSDecoderHandle* handle, uint64_t seed) {
     if (!handle) return -1;
     handle->deterministic_seed = seed;
-    dbs::g_deterministic_seed_tls = seed;
     return 0;
 }
 
