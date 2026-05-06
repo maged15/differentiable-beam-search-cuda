@@ -1,6 +1,6 @@
 # Supported Platforms
 
-This repository is currently a release-candidate research library. The CPU C ABI is intended to build on Linux, macOS, and Windows. The CUDA/PyTorch extension is validated on Linux with NVIDIA CUDA and PyTorch matching the local build environment.
+This repository is a v1.0 research library. The CPU C ABI is intended to build on Linux, macOS, and Windows. The CUDA/PyTorch extension is validated on Linux with NVIDIA CUDA and PyTorch matching the local build environment.
 
 ## Tier 1
 

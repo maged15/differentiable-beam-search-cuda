@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.0.0rc9
+## 1.0.0
 
 - Wired public CUDA `final_scores()` through the exact CUDA kernel's `min_length` support.
 - Added CUDA NaN/+Inf validation when `validate_inputs=1` to match CPU validation semantics.

@@ -1,5 +1,5 @@
 {
-  "version": "1.0.0rc9",
+  "version": "1.0.0",
   "ci_produced_artifacts_only": true,
   "no_skipped_targets": true,
   "supported_matrix_frozen": true,
