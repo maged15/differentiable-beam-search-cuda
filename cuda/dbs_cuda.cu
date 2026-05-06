@@ -37,7 +37,7 @@ static __device__ __forceinline__ bool better_candidate(
     if (parent != best_parent) return parent < best_parent;
     if (token != best_token) return token < best_token;
     if (length != best_length) return length < best_length;
-    return from_logprob < best_from_logprob;
+    return from_logprob > best_from_logprob;
 }
 
 __global__ void dbs_forward_kernel(

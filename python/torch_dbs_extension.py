@@ -5,7 +5,9 @@ Public tensor API:
   - unbatched: [T, K, V] -> [K]
   - batched:   [B, T, K, V] -> [B, K]
 
-CPU supports surrogate autograd for both forms. CUDA currently supports forward only.
+CPU supports surrogate autograd for both forms. CUDA supports hard forward
+decoding and limited selected-path sparse surrogate backward when the optional
+CUDA extension is built and beam_size <= 32.
 """
 
 from __future__ import annotations
@@ -26,6 +28,7 @@ except ImportError:  # pragma: no cover
     _cuda_ext = None
 
 _INT_MAX = 2_147_483_647
+_CUDA_FAST_MAX_BEAM = 32
 
 
 @dataclass(frozen=True)
@@ -100,7 +103,7 @@ def _validate_public_shape(log_probs: torch.Tensor, options: DBSOptions) -> bool
 
 
 def _validate_cuda_supported_options(options: DBSOptions) -> None:
-    """CUDA forward currently implements final-score decoding only.
+    """Validate options supported by the CUDA tensor API.
 
     It supports beam_size/eos_token/min_length plus input validation. Options
     that change other CPU decoding semantics are rejected instead of silently ignored.
@@ -120,7 +123,7 @@ def _validate_cuda_supported_options(options: DBSOptions) -> None:
             unsupported.append(f"{name}={getattr(options, name)!r}")
     if unsupported:
         raise ValueError(
-            "CUDA forward currently supports only beam_size/eos_token/min_length and default "
+            "CUDA currently supports only beam_size/eos_token/min_length and default "
             "decoder-shaping options; unsupported CUDA options: " + ", ".join(unsupported)
         )
 
@@ -164,17 +167,16 @@ class _DBSFinalScores(torch.autograd.Function):
                 )
             _validate_cuda_supported_options(options)
             # Run the full forward so parents/from_logprob are available for the
-            # sparse surrogate backward.  Falls back to scores-only for large beams
-            # (> DBS_CUDA_FAST_MAX_BEAM) where the full kernel is not supported.
+            # sparse surrogate backward. Large beams use scores-only CUDA forward
+            # because the trace-emitting full kernel is bounded by DBS_CUDA_FAST_MAX_BEAM.
             x4 = x.unsqueeze(0) if input_was_unbatched else x
-            try:
+            if options.beam_size <= _CUDA_FAST_MAX_BEAM:
                 _toks, scores, parents, from_logprob = _cuda_ext.decode_forward_full_cuda(
                     x4, options.beam_size, options.eos_token, options.min_length, options.validate_inputs
                 )
                 ctx.save_for_backward(x4, _toks, parents, from_logprob, scores)
                 ctx.vocab_size = x4.size(-1)
-            except Exception:
-                # Large beam or unsupported condition; save only x4 (no backward).
+            else:
                 ctx.save_for_backward(x4)
                 ctx.vocab_size = -1
                 scores = _cuda_ext.final_scores_forward_cuda(
@@ -225,7 +227,8 @@ class _DBSFinalScores(torch.autograd.Function):
 def final_scores(log_probs: torch.Tensor, options: DBSOptions) -> torch.Tensor:
     """Return final beam scores for [T,K,V] or [B,T,K,V] log-prob tensors.
 
-    CPU inputs support surrogate autograd. CUDA inputs support forward only.
+    CPU inputs support surrogate autograd. CUDA inputs support hard forward and
+    limited selected-path sparse surrogate backward for beam_size <= 32.
     """
     return _DBSFinalScores.apply(log_probs, options)
 

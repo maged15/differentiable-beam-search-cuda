@@ -5,13 +5,13 @@
 - `[T, K, V] -> [K]`
 - `[B, T, K, V] -> [B, K]`
 
-`K` must equal `options.beam_size`. All dimensions must be non-empty. Inputs are promoted to FP32 internally; gradients are cast back to the original input dtype on CPU.
+`K` must equal `options.beam_size`. All dimensions must be non-empty. Inputs are promoted to FP32 internally; gradients are cast back to the original input dtype where autograd is supported.
 
 ## Autograd support
 
 CPU supports sparse surrogate autograd for both public shapes.
 
-CUDA is forward-only. Calling `.backward()` through a CUDA input raises a `RuntimeError`. This is intentional until a CUDA sparse surrogate backward is implemented and validated against CPU gradients on adversarial cases.
+CUDA supports hard forward and limited selected-path sparse surrogate backward for `beam_size <= 32` when `dbs_torch_cuda_ext` is built. Larger CUDA beams run scores-only forward and raise on backward.
 
 ## CUDA fast path
 
@@ -20,5 +20,5 @@ The exact custom CUDA path is the default. The score-only ATen top-k fast path i
 
 ## CUDA option support
 
-CUDA forward supports the public tensor shapes `[T,K,V] -> [K]` and `[B,T,K,V] -> [B,K]`.
-The CUDA extension currently implements final-score forward decoding for `beam_size` and `eos_token`; options that change CPU decoding semantics, such as `min_length`, `length_penalty_alpha`, temperature fields, relaxed-pool sizing, and soft-top-k iteration settings, are rejected on CUDA instead of being silently ignored. CPU tensors continue to accept the full `DBSOptions` tuple and support surrogate autograd.
+CUDA supports the public tensor shapes `[T,K,V] -> [K]` and `[B,T,K,V] -> [B,K]`.
+The CUDA extension implements final-score decoding for `beam_size`, `eos_token`, and `min_length`; options that change CPU decoding semantics, such as `length_penalty_alpha`, temperature fields, relaxed-pool sizing, and soft-top-k iteration settings, are rejected on CUDA instead of being silently ignored. CPU tensors continue to accept the full `DBSOptions` tuple and support surrogate autograd.

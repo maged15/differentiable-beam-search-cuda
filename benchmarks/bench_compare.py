@@ -84,8 +84,8 @@ def main() -> None:
                     "T": T,
                     "K": K,
                     "V": V,
-                    "torch_greedy_ms": time_ms(lambda: torch_greedy(x), args.repeats),
-                    "torch_topk_beam_ms": time_ms(lambda: torch_step_topk(x, K), args.repeats),
+                    "torch_greedy_ms": time_ms(lambda x=x: torch_greedy(x), args.repeats),
+                    "torch_topk_beam_ms": time_ms(lambda x=x, k=K: torch_step_topk(x, k), args.repeats),
                 })
 
     hf_ms = optional_hf_generate(args.hf_model, max(1, args.repeats // 2))

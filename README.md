@@ -3,7 +3,7 @@
 [![CI](https://github.com/maged15/differentiable-beam-search-cuda/actions/workflows/ci.yml/badge.svg)](https://github.com/maged15/differentiable-beam-search-cuda/actions/workflows/ci.yml)
 [![CUDA smoke](https://github.com/maged15/differentiable-beam-search-cuda/actions/workflows/cuda-smoke.yml/badge.svg)](https://github.com/maged15/differentiable-beam-search-cuda/actions/workflows/cuda-smoke.yml)
 
-This package is a v1.0 research library for hard beam search with sparse surrogate gradients. The public PyTorch API is CPU-autograd/CUDA-forward: CUDA tensors are forward-only; CPU tensors support surrogate backward, while CUDA tensors currently support forward/parity validation only. v1.0 adds hardware validation gates, allocator/reproducibility counters, an optional CUDA fast-kernel path, optional CUDA PyTorch extension source, ABI symbol checks, and clearer release criteria.
+This package is a v1.0 research library for hard beam search with sparse surrogate gradients. The public PyTorch API supports CPU surrogate autograd and CUDA hard forward decoding; the optional CUDA extension also provides limited selected-path sparse surrogate backward for `beam_size <= 32`. v1.0 adds hardware validation gates, allocator/reproducibility counters, an optional CUDA fast-kernel path, optional CUDA PyTorch extension source, ABI symbol checks, and clearer release criteria.
 
 Production status: not production-certified until `scripts/run_hardware_validation.sh`, CUDA parity tests, SIMD parity tests, ABI checks, and sanitizer/fuzzer campaigns have passed on the intended deployment hardware.
 
@@ -139,7 +139,7 @@ The package includes both a ctypes wrapper (`python/torch_dbs.py`) and a compile
 - `[T, K, V] -> [K]` for one example
 - `[B, T, K, V] -> [B, K]` for batched examples
 
-CPU tensors support surrogate autograd for both shapes. CUDA tensors support forward only; CUDA autograd backward intentionally raises until sparse-gradient CPU/GPU parity is implemented and validated.
+CPU tensors support surrogate autograd for both shapes. CUDA tensors support hard forward decoding. When the optional CUDA extension is built, CUDA autograd also supports the selected-path sparse surrogate backward for `beam_size <= 32`; larger beams remain forward-only on CUDA.
 
 Build the extension from the package root after building `libdbs`:
 
@@ -167,7 +167,7 @@ CUDA forward example:
 
 ```python
 x = torch.randn(2, T, K, V, device="cuda")
-y = final_scores(x, DBSOptions(beam_size=K))  # forward only
+y = final_scores(x, DBSOptions(beam_size=K))
 ```
 
 End-to-end CPU toy training example:

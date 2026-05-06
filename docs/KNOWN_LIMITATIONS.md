@@ -2,9 +2,9 @@
 
 Forward decoding uses hard beam selection, which is discontinuous. The backward API exposes a surrogate gradient. It is useful for experiments but is not a mathematically exact derivative through top-k beam search.
 
-The optimized CUDA fast path is for `eos_token = -1` no-EOS scoring. EOS-aware CUDA decoding and constraint-heavy decoding use the exact fallback path or CPU behavior depending on the API. Treat EOS/constraint performance as correctness-first until dedicated fused kernels are added.
+The CUDA backend is correctness-first. EOS-aware decoding is supported, but constraint-heavy decoding still belongs on the CPU path. Treat EOS/constraint performance as validation-oriented until dedicated fused kernels are added.
 
-The CUDA PyTorch extension uses ATen CUDA `topk` for the common no-EOS fast path. This gives strong practical performance and parity, but it is not yet a single fused custom kernel.
+The CUDA PyTorch extension can use ATen CUDA `topk` for the common no-EOS fast path when `DBS_ENABLE_SCORE_ONLY_FAST_PATH=1` is set. This gives strong practical performance and parity for score-only workloads, but it is not a single fused custom kernel.
 
 Production readiness still requires long fuzz/soak validation, multi-platform CI evidence, signed artifacts, SBOM publication, and performance thresholds on the deployment hardware.
 
@@ -16,4 +16,4 @@ The CUDA extension defaults to the exact custom kernel. The optimized ATen `topk
 
 ## Package framing
 
-This is a CPU-autograd/CUDA-forward release candidate. It is not a full CUDA differentiable beam-search training package until CUDA sparse surrogate backward is implemented and validated.
+This is a CPU-autograd/CUDA-limited-backward release. It is not a full CUDA differentiable beam-search training package until CUDA surrogate backward has CPU/GPU parity evidence across the full option matrix and large-beam trace support.

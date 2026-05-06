@@ -1,6 +1,6 @@
 # CUDA validation
 
-CUDA support is forward-only in the public PyTorch API. CPU tensors support surrogate autograd; CUDA tensors support final-score forward/parity validation only.
+CUDA support in the public PyTorch API is hard-forward first. CPU tensors support the full sparse surrogate autograd path; CUDA tensors support final-score forward/parity validation and limited selected-path sparse surrogate backward for `beam_size <= 32`.
 
 Public tensor contract:
 
