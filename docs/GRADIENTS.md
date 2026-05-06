@@ -12,4 +12,4 @@ Use these gradients for surrogate-gradient training and validation experiments. 
 
 ## CUDA gradient status
 
-CPU backward defaults to sparse surrogate gradients. CUDA sparse scatter source is present, but fused CUDA surrogate backward through PyTorch autograd is disabled until CPU/GPU gradient parity is demonstrated on hardware. Hard beam selection remains discontinuous; gradients are surrogate gradients, not exact derivatives of top-k selection.
+CPU backward defaults to sparse surrogate gradients. CUDA PyTorch autograd supports a limited selected-path sparse surrogate backward for `beam_size <= 32`, using the trace emitted by the cooperative CUDA forward kernel. Larger CUDA beams are forward-only until a trace-emitting large-beam kernel is added. Hard beam selection remains discontinuous; gradients are surrogate gradients, not exact derivatives of top-k selection.

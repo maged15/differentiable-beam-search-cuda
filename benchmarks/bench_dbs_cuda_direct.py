@@ -42,13 +42,13 @@ def cpu_ms(fn, repeats=10, warmup=2):
         fn()
     return (time.perf_counter() - t0) * 1000.0 / repeats
 
-def pytorch_ref_scores(x, K):
+def pytorch_ref_scores(x, beam_size):
     B, T, _, V = x.shape
-    scores = torch.full((B, K), -float("inf"), device=x.device, dtype=x.dtype)
+    scores = torch.full((B, beam_size), -float("inf"), device=x.device, dtype=x.dtype)
     scores[:, 0] = 0.0
     for t in range(T):
         cand = scores[:, :, None] + x[:, t, :, :]
-        scores, _ = torch.topk(cand.reshape(B, K * V), K, dim=1)
+        scores, _ = torch.topk(cand.reshape(B, beam_size * V), beam_size, dim=1)
     return scores
 
 shapes = [
@@ -77,9 +77,9 @@ for B, T, K, V in shapes:
 
     cpu_cuda_diff = (cpu_out - cuda_out).abs().max().item()
     cuda_ref_diff = (cuda_out - torch_ref_out).abs().max().item()
-    dbs_cuda_ms = cuda_ms(lambda: final_scores(x_cuda, opts))
-    torch_cuda_ms = cuda_ms(lambda: pytorch_ref_scores(x_cuda, K))
-    dbs_cpu_ms = cpu_ms(lambda: [final_scores(x_cpu[b], opts) for b in range(B)])
+    dbs_cuda_ms = cuda_ms(lambda x_cuda=x_cuda, opts=opts: final_scores(x_cuda, opts))
+    torch_cuda_ms = cuda_ms(lambda x_cuda=x_cuda, beam_size=K: pytorch_ref_scores(x_cuda, beam_size))
+    dbs_cpu_ms = cpu_ms(lambda x_cpu=x_cpu, opts=opts, batch_size=B: [final_scores(x_cpu[b], opts) for b in range(batch_size)])
     peak_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
     rows.append({
         "B": B, "T": T, "K": K, "V": V,

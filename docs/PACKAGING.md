@@ -28,7 +28,7 @@ The public Python API accepts both unbatched and batched tensors on CPU and CUDA
 - `[T,K,V] -> [K]`
 - `[B,T,K,V] -> [B,K]`
 
-CUDA autograd backward is not implemented. CUDA tensors are forward-only; CPU tensors support the sparse surrogate backward.
+CUDA tensors support hard forward and limited selected-path sparse surrogate backward for `beam_size <= 32`; larger CUDA beams are forward-only. CPU tensors support the sparse surrogate backward across the full CPU option set.
 
 ## ctypes wrapper
 

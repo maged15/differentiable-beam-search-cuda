@@ -23,6 +23,7 @@ DBS_ENABLE_CUDA ?= OFF
 DBS_ENABLE_SANITIZERS ?= OFF
 DBS_ENABLE_TSAN ?= OFF
 DBS_ENABLE_MSAN ?= OFF
+DBS_CUDA_USE_FAST_MATH ?= OFF
 DBS_BUILD_HARDWARE_GATES ?= ON
 
 .PHONY: help all configure build test bench install clean distclean rebuild \
@@ -71,6 +72,7 @@ configure:
 	  -DDBS_ENABLE_SANITIZERS=$(DBS_ENABLE_SANITIZERS) \
 	  -DDBS_ENABLE_TSAN=$(DBS_ENABLE_TSAN) \
 	  -DDBS_ENABLE_MSAN=$(DBS_ENABLE_MSAN) \
+	  -DDBS_CUDA_USE_FAST_MATH=$(DBS_CUDA_USE_FAST_MATH) \
 	  -DDBS_BUILD_HARDWARE_GATES=$(DBS_BUILD_HARDWARE_GATES)
 
 build: configure
@@ -150,7 +152,7 @@ cuda-validate:
 	mkdir -p logs benchmarks/results validation/release_artifacts
 	bash scripts/build_wheels.sh --cuda --no-isolation
 	bash scripts/test_wheels_clean.sh --cuda
-	python3 python/tests/test_cuda_parity.py
+	python3 -m pytest python/tests/test_cuda_parity.py python/tests/test_cuda_backward.py -q
 	python3 benchmarks/bench_dbs_cuda_direct.py
 	python3 scripts/check_perf_thresholds.py benchmarks/results/bench-dbs-cuda-direct.csv
 

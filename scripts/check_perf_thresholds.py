@@ -18,6 +18,54 @@ def fenv(name: str, default: float) -> float:
         return default
 
 
+def parse_benchmark_row(row, index):
+    try:
+        return {
+            "B": int(row["B"]),
+            "T": int(row["T"]),
+            "K": int(row["K"]),
+            "V": int(row["V"]),
+            "cpu_cuda": float(row.get("max_abs_cpu_cuda_diff", "inf")),
+            "cuda_ref": float(row.get("max_abs_cuda_torch_ref_diff", "inf")),
+            "peak": float(row.get("peak_cuda_mb", "inf")),
+            "speedup": float(row.get("cuda_vs_cpu_speedup", "0")),
+            "torch_speedup": float(row.get("cuda_vs_torch_speedup", "0")),
+        }, None
+    except Exception as exc:
+        return None, f"row {index}: parse error: {exc}"
+
+
+def row_label(row, index):
+    return f"row {index} B={row['B']} T={row['T']} K={row['K']} V={row['V']}"
+
+
+def check_common_thresholds(row, index, args):
+    label = row_label(row, index)
+    failures = []
+    if row["cpu_cuda"] > args.max_diff:
+        failures.append(f"{label}: CPU/CUDA diff {row['cpu_cuda']} > {args.max_diff}")
+    if row["cuda_ref"] > args.max_diff:
+        failures.append(f"{label}: CUDA/reference diff {row['cuda_ref']} > {args.max_diff}")
+    if row["peak"] > args.max_peak_mb:
+        failures.append(f"{label}: peak CUDA memory {row['peak']}MB > {args.max_peak_mb}MB")
+    return failures
+
+
+def is_large_case(row):
+    return row["V"] >= 32000 and row["T"] >= 16 and row["K"] >= 4
+
+
+def check_large_case_thresholds(row, index, args):
+    label = row_label(row, index)
+    failures = []
+    if row["speedup"] < args.min_large_cpu_speedup:
+        failures.append(f"{label}: CUDA/CPU speedup {row['speedup']} < {args.min_large_cpu_speedup}")
+    # cuda_vs_torch_speedup = torch_ms / dbs_cuda_ms. Values < 0.5 mean DBS is >2x slower than torch ref.
+    if row["torch_speedup"] < 1.0 / args.max_cuda_vs_torch_slowdown:
+        failures.append(f"{label}: DBS CUDA is too slow vs torch reference ratio={row['torch_speedup']}")
+    return failures
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("csv_path", nargs="?", default="benchmarks/results/bench-dbs-cuda-direct.csv")
@@ -40,32 +88,16 @@ def main() -> int:
     failures = []
     large_rows = 0
     for i, row in enumerate(rows, 1):
-        try:
-            B = int(row["B"]); T = int(row["T"]); K = int(row["K"]); V = int(row["V"])
-            cpu_cuda = float(row.get("max_abs_cpu_cuda_diff", "inf"))
-            cuda_ref = float(row.get("max_abs_cuda_torch_ref_diff", "inf"))
-            peak = float(row.get("peak_cuda_mb", "inf"))
-            speedup = float(row.get("cuda_vs_cpu_speedup", "0"))
-            torch_speedup = float(row.get("cuda_vs_torch_speedup", "0"))
-        except Exception as exc:
-            failures.append(f"row {i}: parse error: {exc}")
+        parsed, error = parse_benchmark_row(row, i)
+        if error:
+            failures.append(error)
             continue
 
-        if cpu_cuda > args.max_diff:
-            failures.append(f"row {i} B={B} T={T} K={K} V={V}: CPU/CUDA diff {cpu_cuda} > {args.max_diff}")
-        if cuda_ref > args.max_diff:
-            failures.append(f"row {i} B={B} T={T} K={K} V={V}: CUDA/reference diff {cuda_ref} > {args.max_diff}")
-        if peak > args.max_peak_mb:
-            failures.append(f"row {i} B={B} T={T} K={K} V={V}: peak CUDA memory {peak}MB > {args.max_peak_mb}MB")
+        failures.extend(check_common_thresholds(parsed, i, args))
 
-        # Require useful CUDA acceleration only for meaningful large cases.
-        if V >= 32000 and T >= 16 and K >= 4:
+        if is_large_case(parsed):
             large_rows += 1
-            if speedup < args.min_large_cpu_speedup:
-                failures.append(f"row {i} B={B} T={T} K={K} V={V}: CUDA/CPU speedup {speedup} < {args.min_large_cpu_speedup}")
-            # cuda_vs_torch_speedup = torch_ms / dbs_cuda_ms. Values < 0.5 mean DBS is >2x slower than torch ref.
-            if torch_speedup < 1.0 / args.max_cuda_vs_torch_slowdown:
-                failures.append(f"row {i} B={B} T={T} K={K} V={V}: DBS CUDA is too slow vs torch reference ratio={torch_speedup}")
+            failures.extend(check_large_case_thresholds(parsed, i, args))
 
     if large_rows == 0:
         failures.append("no large CUDA benchmark rows were found")

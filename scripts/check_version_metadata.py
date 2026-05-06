@@ -8,6 +8,7 @@ root = Path(__file__).resolve().parents[1]
 version = (root / "VERSION").read_text().strip()
 pyproject = (root / "pyproject.toml").read_text()
 readme = (root / "README.md").read_text()
+changelog = (root / "CHANGELOG.md").read_text()
 cmake = (root / "CMakeLists.txt").read_text()
 header = (root / "include" / "dbs.h").read_text()
 source = (root / "src" / "differentiable_beam.cpp").read_text()
@@ -24,6 +25,14 @@ for stale in re.findall(r'1\.0\.0rc\d+', readme):
         errors.append(f'README.md contains stale version {stale}, expected {version}')
 if f'return "{version}"' not in source:
     errors.append(f'dbs_version_string() must return VERSION {version}')
+patch_notes = sorted(p.name for p in root.glob('PATCH_NOTES*.md'))
+if patch_notes:
+    errors.append('root patch-note files must be folded into CHANGELOG.md: ' + ', '.join(patch_notes))
+changelog_heading = re.search(r'^##\s+(.+?)\s*$', changelog, flags=re.MULTILINE)
+if not changelog_heading:
+    errors.append('CHANGELOG.md must start with a current version heading')
+elif changelog_heading.group(1).strip() != version:
+    errors.append(f'CHANGELOG.md current heading is {changelog_heading.group(1).strip()}, expected {version}')
 for rel in ["validation/v10_production_manifest.template.json", "validation/fixtures/cuda/golden_fixture_manifest.json"]:
     text = (root / rel).read_text()
     for stale in re.findall(r'1\.0\.0rc\d+', text):

@@ -35,10 +35,11 @@ int dbs_cuda_get_synchronization(void);
  * [B, T, K]; final_scores shape is [B, K]. The implementation performs hard
  * deterministic beam expansion on device and carries EOS beams forward.
  *
- * CUDA C entry points intentionally implement only hard final-score decoding:
- * no surrogate backward, selected/soft-top-k temperatures, relaxed pool,
- * GNMT length penalty, token constraints, or non-default CPU decoder shaping
- * options are accepted here. eos_token must be -1 or within [0, vocab_size). */
+ * CUDA decode entry points intentionally implement hard final-score decoding.
+ * Sparse surrogate backward is exposed through the separate trace/backward
+ * helpers below. selected/soft-top-k temperatures, relaxed pool, GNMT length
+ * penalty, token constraints, and non-default CPU decoder shaping options are
+ * not accepted here. eos_token must be -1 or within [0, vocab_size). */
 int dbs_cuda_decode_forward(
     const float* device_log_probs,
     int batch_size,
@@ -134,8 +135,9 @@ int dbs_cuda_backward_build_sparse(
     void* cuda_stream);
 
 /* Sparse backward scatter: grad_out[index[i]] += value[i]. grad_out is a device
- * pointer with grad_out_count float elements. Duplicate indices accumulate.
- * Out-of-range indices are rejected before scatter instead of being dropped. */
+ * pointer with grad_out_count float elements. Duplicate valid indices
+ * accumulate. Out-of-range indices, including -1 sentinels emitted by the
+ * sparse backward builder, are skipped by the scatter kernel. */
 int dbs_cuda_sparse_backward_scatter(
     const int64_t* device_indices,
     const float* device_values,

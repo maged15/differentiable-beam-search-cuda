@@ -29,12 +29,15 @@ build_cuda = os.environ.get("DBS_BUILD_TORCH_CUDA", "0") == "1"
 if build_cuda:
     if CUDA_HOME is None:
         raise RuntimeError("DBS_BUILD_TORCH_CUDA=1 was set, but CUDA_HOME was not found. Install a CUDA toolkit with nvcc and set CUDA_HOME.")
+    nvcc_args = ["-O3"]
+    if os.environ.get("DBS_CUDA_USE_FAST_MATH", "0") == "1":
+        nvcc_args.append("--use_fast_math")
     ext_modules.append(
         CUDAExtension(
             "dbs_torch_cuda_ext",
             ["python/torch_cuda_extension.cpp", "cuda/dbs_cuda.cu"],
             include_dirs=include_dirs,
-            extra_compile_args={"cxx": ["-O3", "-std=c++17"], "nvcc": ["-O3", "--use_fast_math"]},
+            extra_compile_args={"cxx": ["-O3", "-std=c++17"], "nvcc": nvcc_args},
         )
     )
 
