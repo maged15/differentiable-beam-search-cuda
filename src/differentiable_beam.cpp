@@ -691,7 +691,15 @@ DBS_AVX512_TARGET static inline __m512 exp512_ps(__m512 x) {
 
 DBS_AVX512_TARGET static inline __m512 sigmoid512_ps(__m512 x) {
     const __m512 one = _mm512_set1_ps(1.0f);
-    return _mm512_div_ps(one, _mm512_add_ps(one, exp512_ps(_mm512_sub_ps(_mm512_setzero_ps(), x))));
+    const __m512 zero = _mm512_setzero_ps();
+    const __mmask16 nonnegative = _mm512_cmp_ps_mask(x, zero, _CMP_GE_OS);
+    const __m512 exp_neg_x = exp512_ps(_mm512_sub_ps(zero, x));
+    const __m512 pos = _mm512_div_ps(one, _mm512_add_ps(one, exp_neg_x));
+    const __m512 min_normal_arg = _mm512_set1_ps(-87.3365447505531f);
+    const __m512 min_normal = _mm512_set1_ps(std::numeric_limits<float>::min());
+    const __m512 exp_x = _mm512_max_ps(exp512_ps(_mm512_max_ps(x, min_normal_arg)), min_normal);
+    const __m512 neg = _mm512_div_ps(exp_x, _mm512_add_ps(one, exp_x));
+    return _mm512_mask_blend_ps(nonnegative, neg, pos);
 }
 
 DBS_AVX512_TARGET float dot(const float* a, const float* b, int n) {
@@ -1150,6 +1158,73 @@ DBS_SSE42_TARGET void softmax_selected(const float* scores, float* out, int n, f
     const __m128 inv = _mm_set1_ps(inv_sum);
     for (; i + 3 < n; i += 4) _mm_storeu_ps(out + i, _mm_mul_ps(_mm_loadu_ps(out + i), inv));
     for (; i < n; ++i) out[i] *= inv_sum;
+}
+
+DBS_SSE42_TARGET void scan_parent_row(
+    const float* row,
+    float parent_raw,
+    int parent_length,
+    int parent,
+    int vocab_size,
+    Candidate* top,
+    int top_count,
+    int vocab_block,
+    float length_penalty_alpha,
+    const uint8_t* banned_tokens,
+    int forced_token,
+    int eos_token,
+    int min_length
+) {
+    if (banned_tokens || forced_token >= 0 || (eos_token >= 0 && parent_length + 1 < min_length)) {
+        scan_parent_row_scalar(row, parent_raw, parent_length, parent, vocab_size, top, top_count, vocab_block, length_penalty_alpha, banned_tokens, forced_token, eos_token, min_length);
+        return;
+    }
+
+    const int new_len = parent_length + 1;
+    const float inv_penalty = 1.0f / gnmt_length_penalty(new_len, length_penalty_alpha);
+    const __m128 parent_vec = _mm_set1_ps(parent_raw);
+    const __m128 scale_vec = _mm_set1_ps(inv_penalty);
+    const __m128 neg_inf_vec = _mm_set1_ps(-std::numeric_limits<float>::infinity());
+    const __m128 pos_inf_vec = _mm_set1_ps(std::numeric_limits<float>::infinity());
+
+    for (int base = 0; base < vocab_size; base += vocab_block) {
+        const int end = std::min(vocab_size, base + vocab_block);
+        int v = base;
+
+        for (; v + 3 < end; v += 4) {
+            const __m128 lp = _mm_loadu_ps(row + v);
+            const __m128 raw_vec = _mm_add_ps(lp, parent_vec);
+            const __m128 rank_vec = _mm_mul_ps(raw_vec, scale_vec);
+
+            const float threshold = top[top_count - 1].score;
+            const __m128 finite = _mm_and_ps(
+                _mm_cmpgt_ps(lp, neg_inf_vec),
+                _mm_cmplt_ps(lp, pos_inf_vec));
+            const __m128 better = _mm_cmpgt_ps(rank_vec, _mm_set1_ps(threshold));
+            const int mask = _mm_movemask_ps(_mm_and_ps(finite, better));
+
+            if (mask) {
+                alignas(16) float rank_tmp[4];
+                alignas(16) float raw_tmp[4];
+                _mm_store_ps(rank_tmp, rank_vec);
+                _mm_store_ps(raw_tmp, raw_vec);
+                int m = mask;
+                while (m) {
+                    const int lane = __builtin_ctz(m);
+                    insert_topk(top, top_count, Candidate{rank_tmp[lane], raw_tmp[lane], parent, v + lane, new_len, 1});
+                    m &= m - 1;
+                }
+            }
+        }
+
+        for (; v < end; ++v) {
+            const float lp = row[v];
+            if (!std::isfinite(lp)) continue;
+            const float raw = parent_raw + lp;
+            const float rank = raw * inv_penalty;
+            insert_topk(top, top_count, Candidate{rank, raw, parent, v, new_len, 1});
+        }
+    }
 }
 }
 #endif
@@ -1741,6 +1816,17 @@ private:
 #if DBS_CAN_COMPILE_AVX2
         if (kernel_path_enabled(KernelPath::AVX2) && runtime_has_avx2()) {
             avx2::scan_parent_row(
+                row, parent_raw, parent_length, parent,
+                vocab_size, top, top_count, opt_.vocab_block,
+                opt_.length_penalty_alpha, banned_tokens, forced_token,
+                opt_.eos_token, min_length
+            );
+            return;
+        }
+#endif
+#if DBS_CAN_COMPILE_SSE42
+        if (kernel_path_enabled(KernelPath::SSE42) && runtime_has_sse42()) {
+            sse42::scan_parent_row(
                 row, parent_raw, parent_length, parent,
                 vocab_size, top, top_count, opt_.vocab_block,
                 opt_.length_penalty_alpha, banned_tokens, forced_token,
@@ -2501,6 +2587,31 @@ DBS_AVX512_TARGET static int run_avx512_vector_math_parity_impl(ParityReport* re
         for (int i = 0; i < 16; ++i) {
             if (!close_enough(output[i], safe_exp_scalar(input[i]), 2.5e-4f, 2.5e-4f)) {
                 report_failure(report, "avx512 exp512_ps diverged from scalar exp");
+                return 1;
+            }
+        }
+        if (report) ++report->cases_run;
+    }
+
+    {
+        alignas(64) float input[16] = {
+            -88.0f, -80.0f, -60.0f, -45.0f, -20.0f, -12.0f, -8.0f, -4.0f,
+             -1.0f, 0.0f, 1.0f, 4.0f, 8.0f, 12.0f, 20.0f, 45.0f,
+        };
+        alignas(64) float output[16] = {};
+        const __m512 y = avx512::sigmoid512_ps(_mm512_load_ps(input));
+        _mm512_store_ps(output, y);
+        for (int i = 0; i < 16; ++i) {
+            const float expected = sigmoid_scalar(input[i]);
+            const bool tiny = expected > 0.0f && expected < 1.0e-6f;
+            const bool denormal_floor = input[i] < -87.0f;
+            const bool ok = denormal_floor
+                ? (output[i] >= std::numeric_limits<float>::min())
+                : tiny
+                ? (output[i] > 0.0f && std::fabs(output[i] - expected) <= std::fabs(expected) * 2.5e-1f)
+                : close_enough(output[i], expected, 2.5e-4f, 2.5e-4f);
+            if (!ok) {
+                report_failure(report, "avx512 sigmoid512_ps diverged from scalar sigmoid");
                 return 1;
             }
         }
@@ -3494,9 +3605,15 @@ extern "C" DBS_EXPORT int dbs_decode_batch(
         auto br = std::make_unique<DBSBatchResultHandle>();
         br->results.resize(static_cast<size_t>(batch_size));
 
-        const size_t stride =
-            static_cast<size_t>(steps) * static_cast<size_t>(handle->beam_size) * static_cast<size_t>(vocab_size);
-        if (stride == 0 || stride / static_cast<size_t>(vocab_size) != static_cast<size_t>(steps) * static_cast<size_t>(handle->beam_size)) {
+        const size_t step_beam = dbs::checked_mul_size(
+            static_cast<size_t>(steps),
+            static_cast<size_t>(handle->beam_size),
+            "batch stride overflow");
+        const size_t stride = dbs::checked_mul_size(
+            step_beam,
+            static_cast<size_t>(vocab_size),
+            "batch stride overflow");
+        if (stride == 0) {
             dbs_set_error(handle, "batch stride overflow");
             return -1;
         }

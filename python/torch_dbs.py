@@ -169,15 +169,15 @@ class _DBSFinalScores(torch.autograd.Function):
             final_ptr = dbs.lib.dbs_result_final_scores(result)
             if not final_ptr:
                 raise RuntimeError("dbs_result_final_scores returned null")
-            out = torch.empty((options.beam_size,), dtype=torch.float32)
-            for i in range(options.beam_size):
-                out[i] = final_ptr[i]
+            final_buf = (ctypes.c_float * options.beam_size).from_address(ctypes.addressof(final_ptr.contents))
+            out = torch.frombuffer(final_buf, dtype=torch.float32, count=options.beam_size).clone()
 
-            ctx.state = _CState(dbs, handle, result.value)
-            ctx.shape = tuple(x.shape)
-            ctx.options = options
+            state = _CState(dbs, handle, result.value)
             handle = 0
             result = ctypes.c_void_p()
+            ctx.state = state
+            ctx.shape = tuple(x.shape)
+            ctx.options = options
             return out
         finally:
             if result.value:
@@ -206,11 +206,15 @@ class _DBSFinalScores(torch.autograd.Function):
             val = dbs.lib.dbs_backward_sparse_logprob_values(backward)
             if n and (not idx or not val):
                 raise RuntimeError("sparse gradient buffers are null")
-            for i in range(n):
-                j = int(idx[i])
-                if j < 0 or j >= grad_numel:
+            if n:
+                idx_buf = (ctypes.c_longlong * n).from_address(ctypes.addressof(idx.contents))
+                val_buf = (ctypes.c_float * n).from_address(ctypes.addressof(val.contents))
+                idx_tensor = torch.frombuffer(idx_buf, dtype=torch.int64, count=n)
+                val_tensor = torch.frombuffer(val_buf, dtype=torch.float32, count=n)
+                invalid = (idx_tensor < 0) | (idx_tensor >= grad_numel)
+                if torch.any(invalid).item():
                     raise RuntimeError("sparse gradient index out of bounds")
-                grad[j] += float(val[i])
+                grad.scatter_add_(0, idx_tensor, val_tensor)
             return grad.reshape((T, K, V)), None, None
         finally:
             if backward.value:
