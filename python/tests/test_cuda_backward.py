@@ -20,17 +20,46 @@ CPU_SEMANTIC_FALLBACK_OPTIONS = (
 )
 
 
+def _require_bool_availability(value, source):
+    if value is None:
+        pytest.fail(f"{source} returned None; expected a boolean availability result")
+    return bool(value)
+
+
 def _require_cuda_ext():
-    torch_cuda_available = bool(torch.cuda.is_available())
+    torch_cuda_available = _require_bool_availability(
+        torch.cuda.is_available(), "torch.cuda.is_available()"
+    )
     if not torch_cuda_available:
         pytest.skip("CUDA device unavailable")
     try:
         ext = importlib.import_module("dbs_torch_cuda_ext")
     except ImportError:
         pytest.skip("dbs_torch_cuda_ext not built")
-    if not bool(ext.cuda_available()):
+    ext_cuda_available = _require_bool_availability(
+        ext.cuda_available(), "dbs_torch_cuda_ext.cuda_available()"
+    )
+    if not ext_cuda_available:
         pytest.skip("dbs_torch_cuda_ext reports CUDA unavailable")
     return ext
+
+
+def test_cuda_requirement_fails_on_unknown_torch_availability(monkeypatch):
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: None)
+    with pytest.raises(pytest.fail.Exception, match="torch.cuda.is_available"):
+        _require_cuda_ext()
+
+
+def test_cuda_requirement_fails_on_unknown_extension_availability(monkeypatch):
+    class FakeCudaExt:
+        @staticmethod
+        def cuda_available():
+            return None
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(importlib, "import_module", lambda _: FakeCudaExt())
+    with pytest.raises(pytest.fail.Exception, match="dbs_torch_cuda_ext.cuda_available"):
+        _require_cuda_ext()
 
 
 def _assert_cuda_matches_cpu_forward_backward(x_cpu, opts, grad_out):
