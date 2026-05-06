@@ -12,7 +12,8 @@ CPU semantic implementation while returning CUDA outputs/gradients.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import math
+from dataclasses import dataclass, fields
 from typing import Tuple
 
 import torch
@@ -28,6 +29,13 @@ except ImportError:  # pragma: no cover
     _cuda_ext = None
 
 _INT_MAX = 2_147_483_647
+_NATIVE_CUDA_OPTION_NAMES = frozenset({
+    "beam_size",
+    "eos_token",
+    "min_length",
+    "validate_inputs",
+})
+
 
 @dataclass(frozen=True)
 class DBSOptions:
@@ -68,6 +76,38 @@ def _validate_positive_int_dim(value: int, name: str) -> None:
         raise ValueError(f"{name} exceeds INT_MAX")
 
 
+def _validate_finite_float(value: float, name: str) -> None:
+    if not math.isfinite(float(value)):
+        raise ValueError(f"{name} must be finite")
+
+
+def _validate_public_options(options: DBSOptions) -> None:
+    _validate_finite_float(options.selected_temperature, "selected_temperature")
+    if not options.selected_temperature > 0.0:
+        raise ValueError("selected_temperature must be positive")
+    _validate_finite_float(options.soft_topk_temperature, "soft_topk_temperature")
+    if not options.soft_topk_temperature > 0.0:
+        raise ValueError("soft_topk_temperature must be positive")
+    if options.relaxed_pool_multiplier <= 0:
+        raise ValueError("relaxed_pool_multiplier must be positive")
+    if options.vocab_block <= 0:
+        raise ValueError("vocab_block must be positive")
+    _validate_finite_float(options.length_penalty_alpha, "length_penalty_alpha")
+    if options.length_penalty_alpha < 0.0:
+        raise ValueError("length_penalty_alpha cannot be negative")
+    _validate_finite_float(options.soft_topk_tolerance, "soft_topk_tolerance")
+    if not options.soft_topk_tolerance > 0.0:
+        raise ValueError("soft_topk_tolerance must be positive")
+    if options.soft_topk_max_iters <= 0:
+        raise ValueError("soft_topk_max_iters must be positive")
+    if options.min_length < 0:
+        raise ValueError("min_length cannot be negative")
+    if options.validate_inputs not in (0, 1):
+        raise ValueError("validate_inputs must be 0 or 1")
+    if options.max_dense_gradient_elements <= 0:
+        raise ValueError("max_dense_gradient_elements must be positive")
+
+
 def _validate_eos_token(options: DBSOptions, vocab_size: int) -> None:
     if options.eos_token < -1:
         raise ValueError("eos_token must be -1 or non-negative")
@@ -78,6 +118,7 @@ def _validate_eos_token(options: DBSOptions, vocab_size: int) -> None:
 def _validate_public_shape(log_probs: torch.Tensor, options: DBSOptions) -> bool:
     """Validate public shape and return True if input is unbatched."""
     _validate_positive_int_dim(options.beam_size, "beam_size")
+    _validate_public_options(options)
     if log_probs.dim() == 3:
         _validate_positive_int_dim(log_probs.size(0), "T")
         _validate_positive_int_dim(log_probs.size(1), "K")
@@ -98,6 +139,31 @@ def _validate_public_shape(log_probs: torch.Tensor, options: DBSOptions) -> bool
     raise ValueError("log_probs must have shape [T,K,V] or [B,T,K,V]")
 
 
+def _native_cuda_reference_options(options: DBSOptions) -> DBSOptions:
+    return DBSOptions(
+        beam_size=options.beam_size,
+        eos_token=options.eos_token,
+        min_length=options.min_length,
+        validate_inputs=options.validate_inputs,
+    )
+
+
+def _option_value_matches(value: object, default: object) -> bool:
+    if isinstance(value, float) or isinstance(default, float):
+        return math.isclose(float(value), float(default), rel_tol=0.0, abs_tol=0.0)
+    return value == default
+
+
+def _native_cuda_unsupported_options(options: DBSOptions) -> list[str]:
+    default = _native_cuda_reference_options(options)
+    unsupported = []
+    for field in fields(DBSOptions):
+        name = field.name
+        if name in _NATIVE_CUDA_OPTION_NAMES:
+            continue
+        if not _option_value_matches(getattr(options, name), getattr(default, name)):
+            unsupported.append(f"{name}={getattr(options, name)!r}")
+    return unsupported
 
 
 def _native_cuda_forward_supported(options: DBSOptions) -> bool:
@@ -107,46 +173,26 @@ def _native_cuda_forward_supported(options: DBSOptions) -> bool:
     support. Options that are validated or interpreted only by the CPU decoder
     deliberately use the CPU semantic fallback for the public tensor API.
     """
+    return _cuda_ext is not None and not _native_cuda_unsupported_options(options)
+
+
+def _native_cuda_forward(x4: torch.Tensor, options: DBSOptions) -> torch.Tensor:
+    unsupported = _native_cuda_unsupported_options(options)
+    if unsupported:
+        raise RuntimeError(
+            "internal error: unsupported options reached native CUDA forward: "
+            + ", ".join(unsupported)
+        )
     if _cuda_ext is None:
-        return False
-    default = DBSOptions(
-        beam_size=options.beam_size,
-        eos_token=options.eos_token,
-        min_length=options.min_length,
-        validate_inputs=options.validate_inputs,
+        raise RuntimeError("dbs_torch_cuda_ext is not built")
+    return _cuda_ext.final_scores_forward_cuda(
+        x4, options.beam_size, options.eos_token, options.min_length, options.validate_inputs
     )
-    return all(getattr(options, name) == getattr(default, name) for name in (
-        "selected_temperature",
-        "soft_topk_temperature",
-        "relaxed_pool_multiplier",
-        "vocab_block",
-        "length_penalty_alpha",
-        "soft_topk_tolerance",
-        "soft_topk_max_iters",
-        "max_dense_gradient_elements",
-    ))
 
 
 def _validate_native_cuda_decode_options(options: DBSOptions) -> None:
     """Fail closed for decode(), which exposes native CUDA token traces."""
-    default = DBSOptions(
-        beam_size=options.beam_size,
-        eos_token=options.eos_token,
-        min_length=options.min_length,
-        validate_inputs=options.validate_inputs,
-    )
-    unsupported = []
-    for name in (
-        "selected_temperature",
-        "soft_topk_temperature",
-        "relaxed_pool_multiplier",
-        "vocab_block",
-        "length_penalty_alpha",
-        "soft_topk_tolerance",
-        "soft_topk_max_iters",
-    ):
-        if getattr(options, name) != getattr(default, name):
-            unsupported.append(f"{name}={getattr(options, name)!r}")
+    unsupported = _native_cuda_unsupported_options(options)
     if unsupported:
         raise ValueError(
             "CUDA decode() exposes native token traces only for beam_size/eos_token/min_length "
@@ -191,9 +237,7 @@ class _DBSFinalScores(torch.autograd.Function):
             ctx.save_for_backward(x4_cpu)
 
             if _native_cuda_forward_supported(options):
-                scores = _cuda_ext.final_scores_forward_cuda(
-                    x4, options.beam_size, options.eos_token, options.min_length, options.validate_inputs
-                )
+                scores = _native_cuda_forward(x4, options)
             else:
                 scores = _cpu_forward_batched(x4_cpu, options).to(device=log_probs.device)
             return scores.squeeze(0) if input_was_unbatched else scores

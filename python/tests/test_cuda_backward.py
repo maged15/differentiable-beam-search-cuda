@@ -5,7 +5,19 @@ import importlib
 import pytest
 import torch
 
+import torch_dbs_extension as dbs_ext
 from torch_dbs_extension import DBSOptions, final_scores
+
+CPU_SEMANTIC_FALLBACK_OPTIONS = (
+    ("selected_temperature", 0.7),
+    ("soft_topk_temperature", 0.4),
+    ("relaxed_pool_multiplier", 3),
+    ("vocab_block", 7),
+    ("length_penalty_alpha", 0.35),
+    ("soft_topk_tolerance", 1.0e-5),
+    ("soft_topk_max_iters", 64),
+    ("max_dense_gradient_elements", 1_000_000),
+)
 
 
 def _require_cuda_ext():
@@ -77,6 +89,18 @@ def test_cuda_backward_matches_cpu_non_default_options():
         min_length=2,
         validate_inputs=1,
     )
+    _assert_cuda_matches_cpu_forward_backward(x_cpu, opts, grad_out)
+
+
+@pytest.mark.parametrize(("option_name", "option_value"), CPU_SEMANTIC_FALLBACK_OPTIONS)
+def test_cuda_backward_matches_cpu_for_each_cpu_semantic_fallback_option(option_name, option_value):
+    _require_cuda_ext()
+    torch.manual_seed(2029)
+    x_cpu = torch.randn(2, 3, 2, 13, dtype=torch.float32)
+    x_cpu = torch.log_softmax(x_cpu, dim=-1)
+    grad_out = torch.tensor([[0.25, -0.5], [1.0, 0.125]], dtype=torch.float32)
+    opts = DBSOptions(beam_size=2, eos_token=3, **{option_name: option_value})
+    assert not dbs_ext._native_cuda_forward_supported(opts)
     _assert_cuda_matches_cpu_forward_backward(x_cpu, opts, grad_out)
 
 

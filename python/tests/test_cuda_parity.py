@@ -12,10 +12,31 @@ import os
 import pytest
 import torch
 
+import torch_dbs_extension as dbs_ext
 from torch_dbs_extension import DBSOptions, decode, final_scores
 
 
 INVALID_ARGUMENT_MSG = "invalid argument"
+CPU_SEMANTIC_FALLBACK_OPTIONS = (
+    ("selected_temperature", 0.7),
+    ("soft_topk_temperature", 0.4),
+    ("relaxed_pool_multiplier", 3),
+    ("vocab_block", 17),
+    ("length_penalty_alpha", 0.2),
+    ("soft_topk_tolerance", 1.0e-5),
+    ("soft_topk_max_iters", 64),
+    ("max_dense_gradient_elements", 1_000_000),
+)
+INVALID_CPU_SEMANTIC_OPTIONS = (
+    ({"selected_temperature": 0.0}, "selected_temperature must be positive"),
+    ({"soft_topk_temperature": 0.0}, "soft_topk_temperature must be positive"),
+    ({"relaxed_pool_multiplier": 0}, "relaxed_pool_multiplier must be positive"),
+    ({"vocab_block": 0}, "vocab_block must be positive"),
+    ({"length_penalty_alpha": -0.1}, "length_penalty_alpha cannot be negative"),
+    ({"soft_topk_tolerance": 0.0}, "soft_topk_tolerance must be positive"),
+    ({"soft_topk_max_iters": 0}, "soft_topk_max_iters must be positive"),
+    ({"max_dense_gradient_elements": 0}, "max_dense_gradient_elements must be positive"),
+)
 
 
 def _require_cuda_ext():
@@ -341,6 +362,38 @@ def test_cuda_public_api_supports_non_default_options_with_cpu_semantic_parity()
     torch.testing.assert_close(cuda_scores, cpu_scores, rtol=1e-5, atol=1e-5)
 
 
+@pytest.mark.parametrize(("option_name", "option_value"), CPU_SEMANTIC_FALLBACK_OPTIONS)
+def test_cuda_public_api_supports_each_cpu_semantic_fallback_option(option_name, option_value):
+    _require_cuda_ext()
+    torch.manual_seed(617)
+    x_cpu = torch.randn(3, 2, 19, dtype=torch.float32)
+    x_cpu = torch.log_softmax(x_cpu, dim=-1)
+    opts = DBSOptions(beam_size=2, eos_token=4, **{option_name: option_value})
+
+    assert not dbs_ext._native_cuda_forward_supported(opts)
+    cpu_scores = final_scores(x_cpu, opts).detach()
+    cuda_scores = final_scores(x_cpu.cuda(), opts).detach().cpu()
+    torch.testing.assert_close(cuda_scores, cpu_scores, rtol=1e-5, atol=1e-5)
+
+
+@pytest.mark.parametrize(("option_name", "option_value"), CPU_SEMANTIC_FALLBACK_OPTIONS)
+def test_cuda_public_decode_rejects_cpu_semantic_only_options(option_name, option_value):
+    _require_cuda_ext()
+    x_cpu = torch.log_softmax(torch.randn(3, 2, 19, dtype=torch.float32), dim=-1)
+    opts = DBSOptions(beam_size=2, eos_token=4, **{option_name: option_value})
+
+    with pytest.raises(ValueError, match=option_name):
+        decode(x_cpu.cuda(), opts)
+
+
+@pytest.mark.parametrize(("option_kwargs", "message"), INVALID_CPU_SEMANTIC_OPTIONS)
+def test_cuda_public_api_rejects_invalid_cpu_semantic_options(option_kwargs, message):
+    _require_cuda_ext()
+    x = torch.randn(4, 2, 16, device="cuda", dtype=torch.float32)
+    with pytest.raises((ValueError, RuntimeError), match=message):
+        final_scores(x, DBSOptions(beam_size=2, **option_kwargs))
+
+
 
 def test_cuda_public_api_rejects_invalid_shapes_and_option_values():
     _require_cuda_ext()
@@ -348,7 +401,7 @@ def test_cuda_public_api_rejects_invalid_shapes_and_option_values():
     with pytest.raises((ValueError, RuntimeError)):
         final_scores(bad, DBSOptions(beam_size=2))
     x = torch.randn(4, 2, 16, device="cuda", dtype=torch.float32)
-    with pytest.raises(RuntimeError, match="selected_temperature must be positive"):
+    with pytest.raises((ValueError, RuntimeError), match="selected_temperature must be positive"):
         final_scores(x, DBSOptions(beam_size=2, selected_temperature=-0.7))
 
 
