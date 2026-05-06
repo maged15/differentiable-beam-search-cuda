@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT="$DBS_RELEASE_ARTIFACT_DIR"
 mkdir -p "$OUT"
 
-VERSION="$(cat "$ROOT/VERSION" 2>/dev/null || echo 1.0.0rc9)"
+VERSION="$(cat "$ROOT/VERSION" 2>/dev/null || echo 1.0.0)"
 DATE_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 # Build source archive excluding transient build outputs and git metadata.
@@ -41,7 +41,7 @@ cat > "$OUT/provenance.intoto.json" <<EOF
   "subject": [{"name": "dbs", "digest": {"sha256": "$(sha256sum "$OUT/dbs-${VERSION}-source.tar.gz" | awk '{print $1}')"}}],
   "predicateType": "https://slsa.dev/provenance/v1",
   "predicate": {
-    "buildType": "manual-or-ci-release-candidate",
+    "buildType": "manual-or-ci-release",
     "builder": {"id": "github-actions-or-local"},
     "metadata": {"buildStartedOn": "${DATE_UTC}", "completeness": {"parameters": true, "environment": true, "materials": true}, "reproducible": false}
   }

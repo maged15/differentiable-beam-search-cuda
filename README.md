@@ -1,6 +1,6 @@
-# Differentiable Beam Search (DBS) v1.0.0rc9
+# Differentiable Beam Search (DBS) v1.0.0
 
-This package is a release-candidate research library for hard beam search with sparse surrogate gradients. The public PyTorch API is CPU-autograd/CUDA-forward: CUDA tensors are forward-only; CPU tensors support surrogate backward, while CUDA tensors currently support forward/parity validation only. v1.0 adds hardware validation gates, allocator/reproducibility counters, an optional CUDA fast-kernel path, optional CUDA PyTorch extension source, ABI symbol checks, and clearer release criteria.
+This package is a v1.0 research library for hard beam search with sparse surrogate gradients. The public PyTorch API is CPU-autograd/CUDA-forward: CUDA tensors are forward-only; CPU tensors support surrogate backward, while CUDA tensors currently support forward/parity validation only. v1.0 adds hardware validation gates, allocator/reproducibility counters, an optional CUDA fast-kernel path, optional CUDA PyTorch extension source, ABI symbol checks, and clearer release criteria.
 
 Production status: not production-certified until `scripts/run_hardware_validation.sh`, CUDA parity tests, SIMD parity tests, ABI checks, and sanitizer/fuzzer campaigns have passed on the intended deployment hardware.
 
@@ -8,7 +8,7 @@ Production status: not production-certified until `scripts/run_hardware_validati
 
 `dbs` is a C++17 beam-search decoder with deterministic hard beam output and sparse-first surrogate gradients. The forward pass still uses hard top-k beam selection, so the discrete operation is not exactly differentiable; backward computes an explicit surrogate gradient over selected beams and a relaxed candidate pool.
 
-## What changed in 1.0.0rc9
+## What changed in 1.0.0
 
 - Fixed the AVX-512 exponential range-reduction constant used by sigmoid/softmax-style gradient helpers.
 - Added internal scalar-vs-AVX-512 parity tests for exp, selected softmax weights, and relaxed top-k weights.
@@ -250,7 +250,7 @@ See [`docs/PACKAGING.md`](docs/PACKAGING.md) for CPU/CUDA wheel build modes and 
 
 ## Versioning and ABI
 
-Python package version: `1.0.0rc9`. CMake library `VERSION`: `1.0.0`. Shared-library `SOVERSION` and C ABI version: `10` (`DBS_ABI_VERSION`).
+Python package version: `1.0.0`. CMake library `VERSION`: `1.0.0`. Shared-library `SOVERSION` and C ABI version: `10` (`DBS_ABI_VERSION`).
 
 The Python package uses PEP 440 prerelease versions. CMake intentionally uses numeric semantic versions because CMake package-version files do not support PEP 440 suffixes. Treat `DBS_ABI_VERSION` as the binary compatibility contract and keep it aligned with shared-library `SOVERSION`.
 
