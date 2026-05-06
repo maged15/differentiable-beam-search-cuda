@@ -1,22 +1,25 @@
-# Implementation status for v1.0.0rc7
+# Implementation Status For v1.0.0
 
-Status: late pre-production validation package.
+Status: v1.0.0 research release. Production certification still depends on the release gate and hardware validation evidence described in `docs/PRODUCTION_READINESS.md`.
 
 Implemented and locally CPU-validated:
-- Sparse backward remains the default path; dense backward is explicit and capped.
+
+- Sparse backward remains the default CPU path; dense backward is explicit and capped.
 - CPU C ABI, deterministic tie-breaking, batch decode, variable batch decode, typed FP32/FP16/BF16 decode, model-step callback decode, reusable workspace APIs, advanced constraints, statistics JSON, allocator counters, and deterministic seed recording.
 - C++ tests for sparse gradients, EOS/ties, variable batch shape, constraints, mixed precision conversion, allocator counters, workspace reuse, and golden outputs.
-- ABI symbol check script and Linux export map.
-- Benchmark harnesses for DBS, PyTorch greedy/top-k beam, optional Hugging Face generate, and large vocabulary dimensions.
+- ABI exact and compatibility symbol checks.
+- Benchmark harnesses for DBS, PyTorch greedy/top-k beam, optional Hugging Face generate, and large-vocabulary dimensions.
 
-Implemented as source but requiring hardware validation before release claims:
-- CUDA serial correctness kernel, cooperative CUDA fast kernel for K <= 32, and sparse scatter kernel.
-- Optional CUDA PyTorch extension build path.
-- CUDA/CPU parity pytest suite.
-- Distributed/self-hosted CI definitions for CUDA, ARM64/NEON, AVX2/AVX-512, macOS, Windows, and sanitizer/fuzzer campaigns.
+Implemented with hardware-gated validation:
 
-Not yet production-certified:
-- CUDA kernels have not been runtime-validated in this environment on NVIDIA hardware.
-- CUDA backward through PyTorch autograd is intentionally blocked until sparse-gradient parity is proven.
-- SIMD paths require measured hardware parity/throughput on the target CPUs.
-- ABI compatibility needs continuous checks across released versions, not a one-time symbol diff.
+- CUDA serial correctness kernel, cooperative CUDA fast kernel for `K <= 32`, sparse scatter kernel, and sparse surrogate backward builder.
+- Optional CUDA PyTorch extension build path with CUDA forward and surrogate backward.
+- CUDA/CPU parity pytest suite and self-hosted CUDA smoke workflow.
+- SIMD dispatch paths for AVX-512, AVX2, SSE4.2, and NEON where supported by compiler/runtime hardware.
+
+Not production-certified until release evidence is present:
+
+- CUDA parity and benchmark logs on the target NVIDIA hardware.
+- SIMD parity/throughput logs on target CPUs.
+- Sanitizer and fuzzing campaign artifacts.
+- Wheel provenance, checksums, and release artifacts under the ignored `release/` directory.

@@ -3032,7 +3032,7 @@ extern "C" DBS_EXPORT int dbs_abi_version() {
 }
 
 extern "C" DBS_EXPORT const char* dbs_version_string() {
-    return "1.0.0rc9";
+    return "1.0.0";
 }
 
 extern "C" DBS_EXPORT const char* dbs_last_global_error() {
