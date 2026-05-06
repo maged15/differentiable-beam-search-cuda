@@ -1,0 +1,69 @@
+# SPDX-License-Identifier: MIT
+# Minimal CUDA smoke test: build the CUDA wheel, install it, and run a single
+# forward + backward decode on a CUDA device.  Runs on every push to main and
+# on self-hosted runners that have a GPU; skipped on GitHub-hosted runners.
+name: cuda-smoke
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  cuda-smoke:
+    name: CUDA install-and-run smoke test
+    # Self-hosted runner with CUDA is required.  Set the
+    # DBS_ENABLE_SELF_HOSTED_CUDA repository variable to '1' to enable.
+    if: ${{ vars.DBS_ENABLE_SELF_HOSTED_CUDA == '1' }}
+    runs-on: [self-hosted, linux, x64, cuda]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Report environment
+        run: |
+          nvidia-smi
+          nvcc --version
+          python3 --version
+          python3 -c "import torch; print('torch', torch.__version__, 'CUDA', torch.version.cuda)"
+
+      - name: Build libdbs + CUDA backend
+        run: make cuda JOBS=8
+
+      - name: Install Python wheel with CUDA extension
+        run: |
+          LD_LIBRARY_PATH=$PWD/build-cuda \
+          DBS_BUILD_TORCH_CUDA=1 \
+          pip install --no-build-isolation -e .
+
+      - name: Run CUDA forward + backward smoke
+        run: |
+          LD_LIBRARY_PATH=$PWD/build-cuda python3 - <<'EOF'
+          import torch
+          from torch_dbs_extension import DBSOptions, final_scores
+
+          T, K, V = 8, 4, 500
+          log_probs = torch.randn(T, K, V, device="cuda", requires_grad=True)
+          opts = DBSOptions(beam_size=K)
+
+          # Forward
+          scores = final_scores(log_probs, opts)
+          assert scores.shape == (K,), f"expected [{K}], got {scores.shape}"
+
+          # Surrogate backward
+          loss = -scores[0]
+          loss.backward()
+          assert log_probs.grad is not None, "no gradient"
+          assert log_probs.grad.shape == log_probs.shape
+          assert log_probs.grad.is_cuda
+          print("CUDA smoke: PASSED")
+          print(f"  scores:  {scores.tolist()}")
+          print(f"  grad nonzero: {log_probs.grad.nonzero().size(0)}")
+          EOF
+
+      - name: Run CUDA parity tests
+        run: |
+          LD_LIBRARY_PATH=$PWD/build-cuda \
+          python3 -m pytest python/tests/test_cuda_parity.py -v -q

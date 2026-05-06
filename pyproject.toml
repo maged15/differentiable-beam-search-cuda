@@ -1,15 +1,24 @@
 [build-system]
-requires = ["setuptools>=68", "wheel", "torch", "packaging>=24.2"]
+# torch is required at build time for the PyTorch extension headers.
+# Tested wheel matrix: torch 2.0–2.4 × CUDA 11.8 / CUDA 12.1 / CPU-only.
+# torch 2.5+ is supported but not yet in the CI matrix.
+requires = ["setuptools>=68", "wheel", "torch>=2.0,<3.0", "packaging>=24.2"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "dbs-torch"
 dynamic = ["version"]
-description = "CPU-autograd and CUDA-forward extension for sparse-surrogate differentiable beam search"
+description = "CPU-autograd and CUDA-forward/backward extension for sparse-surrogate differentiable beam search"
 readme = "README.md"
 license = {file = "LICENSE"}
 requires-python = ">=3.9"
-dependencies = ["torch"]
+# Tested CUDA wheel combinations (install torch before dbs-torch):
+#   pip install torch==2.4.0+cu118 --index-url https://download.pytorch.org/whl/cu118
+#   pip install torch==2.4.0+cu121 --index-url https://download.pytorch.org/whl/cu121
+#   pip install torch==2.4.0       # CPU-only
+# The CUDA variant of dbs-torch must be built against the same CUDA toolkit as
+# the torch wheel; set DBS_BUILD_TORCH_CUDA=1 before pip install.
+dependencies = ["torch>=2.0,<3.0"]
 
 [tool.setuptools.dynamic]
 version = {file = ["VERSION"]}

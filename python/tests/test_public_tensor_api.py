@@ -58,6 +58,14 @@ def test_rejects_zero_dimensions_and_bad_beam():
     assert y.shape == (1, 2)
 
 
+def test_rejects_eos_token_outside_vocab_before_native_decode():
+    x = torch.log_softmax(torch.randn(3, 2, 8), dim=-1)
+    with pytest.raises(ValueError, match="eos_token"):
+        final_scores(x, DBSOptions(beam_size=2, eos_token=8))
+    with pytest.raises(ValueError, match="eos_token"):
+        final_scores(x, DBSOptions(beam_size=2, eos_token=-2))
+
+
 def test_cpu_unbatched_and_batched_contract_shapes():
     opts = DBSOptions(beam_size=2)
     x3 = torch.randn(3, 2, 16, dtype=torch.float32)
@@ -68,11 +76,8 @@ def test_cpu_unbatched_and_batched_contract_shapes():
 
 def test_cuda_unbatched_public_contract_if_extension_available():
     if not torch.cuda.is_available():
-        return
-    try:
-        import dbs_torch_cuda_ext  # noqa: F401
-    except ImportError:
-        return
+        pytest.skip("CUDA unavailable")
+    pytest.importorskip("dbs_torch_cuda_ext")
     opts = DBSOptions(beam_size=3, eos_token=-1)
     x = torch.randn(5, 3, 257, dtype=torch.float32)
     x = torch.log_softmax(x, dim=-1)
@@ -82,14 +87,11 @@ def test_cuda_unbatched_public_contract_if_extension_available():
     torch.testing.assert_close(y, ref, rtol=1e-5, atol=1e-5)
 
 
-def test_cuda_unsupported_options_rejected_if_extension_available():
+def test_cuda_min_length_supported_if_extension_available():
     if not torch.cuda.is_available():
-        return
-    try:
-        import dbs_torch_cuda_ext  # noqa: F401
-    except ImportError:
-        return
+        pytest.skip("CUDA unavailable")
+    pytest.importorskip("dbs_torch_cuda_ext")
     x = torch.randn(4, 2, 64, device="cuda", dtype=torch.float32)
     x = torch.log_softmax(x, dim=-1)
-    with pytest.raises(ValueError, match="unsupported CUDA options"):
-        final_scores(x, DBSOptions(beam_size=2, min_length=1))
+    y = final_scores(x, DBSOptions(beam_size=2, min_length=1))
+    assert y.shape == (2,)

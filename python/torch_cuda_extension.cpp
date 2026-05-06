@@ -7,7 +7,10 @@
 #include <cstdlib>
 #include <limits>
 #include <cmath>
+#include <tuple>
 #include <vector>
+
+namespace py = pybind11;
 
 static void validate_int_bound(int64_t value, const char* name) {
     TORCH_CHECK(value > 0, name, " must be positive");
@@ -42,10 +45,42 @@ static void validate_eos_token_bound(int64_t eos_token) {
     TORCH_CHECK(eos_token >= -1 && eos_token <= static_cast<int64_t>(std::numeric_limits<int>::max()), "eos_token must be -1 or fit in int");
 }
 
-static torch::Tensor final_scores_forward_cuda_exact_kernel(torch::Tensor log_probs, int64_t beam_size, int64_t eos_token) {
+static int64_t checked_mul_i64(int64_t a, int64_t b, const char* name) {
+    TORCH_CHECK(a >= 0 && b >= 0, name, " dimensions must be non-negative");
+    TORCH_CHECK(a == 0 || b <= std::numeric_limits<int64_t>::max() / a, name, " size overflow");
+    return a * b;
+}
+
+static void validate_cuda_decode_element_counts(int64_t B, int64_t T, int64_t K, int64_t V) {
+    const int64_t bt = checked_mul_i64(B, T, "B*T");
+    const int64_t btk = checked_mul_i64(bt, K, "B*T*K");
+    checked_mul_i64(B, K, "B*K");
+    checked_mul_i64(btk, V, "B*T*K*V");
+}
+
+static void validate_min_length_bound(int64_t min_length) {
+    TORCH_CHECK(min_length >= 0 && min_length <= static_cast<int64_t>(std::numeric_limits<int>::max()), "min_length must be in [0, INT_MAX]");
+}
+
+static void validate_cuda_log_prob_values(const torch::Tensor& log_probs) {
+    auto invalid = log_probs.isnan().logical_or(log_probs.eq(std::numeric_limits<float>::infinity()));
+    TORCH_CHECK(!invalid.any().item<bool>(), "log_probs contains NaN or +Inf");
+}
+
+static std::tuple<torch::Tensor, torch::Tensor> decode_forward_cuda_exact_kernel(
+    torch::Tensor log_probs,
+    int64_t beam_size,
+    int64_t eos_token,
+    int64_t min_length,
+    int64_t validate_inputs) {
     validate_eos_token_bound(eos_token);
+    validate_min_length_bound(min_length);
+    TORCH_CHECK(validate_inputs == 0 || validate_inputs == 1, "validate_inputs must be 0 or 1");
     const bool unbatched = validate_cuda_log_probs_public(log_probs, beam_size);
     c10::cuda::CUDAGuard device_guard(log_probs.device());
+    if (validate_inputs != 0) {
+        validate_cuda_log_prob_values(log_probs);
+    }
 
     auto x4 = unbatched ? log_probs.unsqueeze(0) : log_probs;
     auto x = x4.contiguous();
@@ -53,20 +88,34 @@ static torch::Tensor final_scores_forward_cuda_exact_kernel(torch::Tensor log_pr
     const int T = static_cast<int>(x.size(1));
     const int K = static_cast<int>(x.size(2));
     const int V = static_cast<int>(x.size(3));
+    validate_cuda_decode_element_counts(B, T, K, V);
 
     auto tokens = torch::empty({B, T, K}, torch::TensorOptions().device(log_probs.device()).dtype(torch::kInt32));
     auto scores = torch::empty({B, K}, log_probs.options());
     const auto stream = at::cuda::getCurrentCUDAStream(log_probs.get_device());
-    const int rc = dbs_cuda_decode_forward_fast(
-        x.data_ptr<float>(), B, T, K, V, static_cast<int>(eos_token),
+    const int rc = dbs_cuda_decode_forward_fast_ex(
+        x.data_ptr<float>(), B, T, K, V, static_cast<int>(eos_token), static_cast<int>(min_length),
         tokens.data_ptr<int32_t>(), scores.data_ptr<float>(), stream.stream());
     TORCH_CHECK(rc == DBS_CUDA_STATUS_OK, dbs_cuda_status_string(rc));
-    return unbatched ? scores.squeeze(0) : scores;
+    return std::make_tuple(unbatched ? tokens.squeeze(0) : tokens, unbatched ? scores.squeeze(0) : scores);
 }
 
-static torch::Tensor final_scores_forward_cuda_aten_topk(torch::Tensor log_probs, int64_t beam_size) {
+static torch::Tensor final_scores_forward_cuda_exact_kernel(
+    torch::Tensor log_probs,
+    int64_t beam_size,
+    int64_t eos_token,
+    int64_t min_length,
+    int64_t validate_inputs) {
+    return std::get<1>(decode_forward_cuda_exact_kernel(log_probs, beam_size, eos_token, min_length, validate_inputs));
+}
+
+static torch::Tensor final_scores_forward_cuda_aten_topk(torch::Tensor log_probs, int64_t beam_size, int64_t validate_inputs) {
     const bool unbatched = validate_cuda_log_probs_public(log_probs, beam_size);
+    TORCH_CHECK(validate_inputs == 0 || validate_inputs == 1, "validate_inputs must be 0 or 1");
     c10::cuda::CUDAGuard device_guard(log_probs.device());
+    if (validate_inputs != 0) {
+        validate_cuda_log_prob_values(log_probs);
+    }
 
     auto x4 = unbatched ? log_probs.unsqueeze(0) : log_probs;
     auto x = x4.contiguous();
@@ -74,6 +123,8 @@ static torch::Tensor final_scores_forward_cuda_aten_topk(torch::Tensor log_probs
     const int64_t T = x.size(1);
     const int64_t K = x.size(2);
     const int64_t V = x.size(3);
+    validate_cuda_decode_element_counts(B, T, K, V);
+    checked_mul_i64(K, V, "K*V");
 
     // DBS initialization semantics: only beam 0 is live at t=0. This is different
     // from a naive PyTorch reference that initializes every beam to zero.
@@ -89,9 +140,20 @@ static torch::Tensor final_scores_forward_cuda_aten_topk(torch::Tensor log_probs
     return unbatched ? scores.squeeze(0) : scores;
 }
 
-static torch::Tensor final_scores_forward_cuda(torch::Tensor log_probs, int64_t beam_size, int64_t eos_token) {
+static torch::Tensor final_scores_forward_cuda(
+    torch::Tensor log_probs,
+    int64_t beam_size,
+    int64_t eos_token,
+    int64_t min_length,
+    int64_t validate_inputs) {
     validate_eos_token_bound(eos_token);
+    validate_min_length_bound(min_length);
+    TORCH_CHECK(validate_inputs == 0 || validate_inputs == 1, "validate_inputs must be 0 or 1");
     validate_cuda_log_probs_public(log_probs, beam_size);
+    c10::cuda::CUDAGuard device_guard(log_probs.device());
+    if (validate_inputs != 0) {
+        validate_cuda_log_prob_values(log_probs);
+    }
 
     // The exact custom kernel is the default because it preserves the C ABI decoder's
     // deterministic rank-aligned beam semantics and uses PyTorch's current CUDA stream.
@@ -101,10 +163,11 @@ static torch::Tensor final_scores_forward_cuda(torch::Tensor log_probs, int64_t 
     const char* legacy_fast = std::getenv("DBS_ASSUME_RANK_ALIGNED_LOG_PROBS");
     const char* force_exact = std::getenv("DBS_FORCE_EXACT_CUDA_KERNEL");
     if (eos_token < 0 && !force_exact && ((enable_fast && *enable_fast == '1') || (legacy_fast && *legacy_fast == '1'))) {
-        return final_scores_forward_cuda_aten_topk(log_probs, beam_size);
+        TORCH_WARN_ONCE("DBS_ENABLE_SCORE_ONLY_FAST_PATH enables the score-only ATen helper; it does not expose parent/token traces and is not a semantic substitute for exact decode.");
+        return final_scores_forward_cuda_aten_topk(log_probs, beam_size, 0);
     }
 
-    return final_scores_forward_cuda_exact_kernel(log_probs, beam_size, eos_token);
+    return final_scores_forward_cuda_exact_kernel(log_probs, beam_size, eos_token, min_length, 0);
 }
 
 static torch::Tensor test_sparse_backward_scatter(torch::Tensor indices, torch::Tensor values, int64_t grad_count) {
@@ -132,10 +195,244 @@ static torch::Tensor test_sparse_backward_scatter(torch::Tensor indices, torch::
     return grad;
 }
 
+static std::tuple<torch::Tensor, torch::Tensor> test_decode_forward_fast_ex(
+    torch::Tensor log_probs,
+    int64_t beam_size,
+    int64_t eos_token,
+    int64_t min_length) {
+    validate_eos_token_bound(eos_token);
+    return decode_forward_cuda_exact_kernel(log_probs, beam_size, eos_token, min_length, 1);
+}
+
+static void validate_cuda_i32_vector(const torch::Tensor& tensor, int64_t expected, const char* name) {
+    TORCH_CHECK(tensor.is_cuda(), name, " must be CUDA");
+    TORCH_CHECK(tensor.dtype() == torch::kInt32, name, " must be int32");
+    TORCH_CHECK(tensor.numel() == expected, name, " must have one element per batch item");
+}
+
+static std::tuple<torch::Tensor, torch::Tensor> test_decode_forward_variable(
+    torch::Tensor log_probs,
+    torch::Tensor steps_per_example,
+    torch::Tensor beam_sizes_per_example,
+    torch::Tensor eos_tokens_per_example,
+    torch::Tensor min_lengths_per_example) {
+    TORCH_CHECK(log_probs.is_cuda(), "log_probs must be CUDA");
+    TORCH_CHECK(log_probs.dtype() == torch::kFloat32, "log_probs must be float32");
+    TORCH_CHECK(log_probs.dim() == 4, "log_probs must have shape [B,T,K,V]");
+    validate_int_bound(log_probs.size(0), "B");
+    validate_int_bound(log_probs.size(1), "T");
+    validate_int_bound(log_probs.size(2), "K");
+    validate_int_bound(log_probs.size(3), "V");
+    TORCH_CHECK(log_probs.size(2) <= DBS_CUDA_MAX_BEAM, "K exceeds CUDA backend maximum");
+
+    const int64_t B64 = log_probs.size(0);
+    validate_cuda_i32_vector(steps_per_example, B64, "steps_per_example");
+    validate_cuda_i32_vector(beam_sizes_per_example, B64, "beam_sizes_per_example");
+    validate_cuda_i32_vector(eos_tokens_per_example, B64, "eos_tokens_per_example");
+    validate_cuda_i32_vector(min_lengths_per_example, B64, "min_lengths_per_example");
+    TORCH_CHECK(
+        steps_per_example.device() == log_probs.device() &&
+        beam_sizes_per_example.device() == log_probs.device() &&
+        eos_tokens_per_example.device() == log_probs.device() &&
+        min_lengths_per_example.device() == log_probs.device(),
+        "variable metadata tensors must be on log_probs.device()");
+
+    c10::cuda::CUDAGuard device_guard(log_probs.device());
+    auto x = log_probs.contiguous();
+    auto steps = steps_per_example.contiguous();
+    auto beams = beam_sizes_per_example.contiguous();
+    auto eos = eos_tokens_per_example.contiguous();
+    auto mins = min_lengths_per_example.contiguous();
+    const int B = static_cast<int>(x.size(0));
+    const int T = static_cast<int>(x.size(1));
+    const int K = static_cast<int>(x.size(2));
+    const int V = static_cast<int>(x.size(3));
+    validate_cuda_decode_element_counts(B, T, K, V);
+
+    auto tokens = torch::empty({B, T, K}, torch::TensorOptions().device(log_probs.device()).dtype(torch::kInt32));
+    auto scores = torch::empty({B, K}, log_probs.options());
+    const auto stream = at::cuda::getCurrentCUDAStream(log_probs.get_device());
+    const int rc = dbs_cuda_decode_forward_variable(
+        x.data_ptr<float>(), B, T, K, V,
+        steps.data_ptr<int32_t>(),
+        beams.data_ptr<int32_t>(),
+        eos.data_ptr<int32_t>(),
+        mins.data_ptr<int32_t>(),
+        tokens.data_ptr<int32_t>(),
+        scores.data_ptr<float>(),
+        stream.stream());
+    TORCH_CHECK(rc == DBS_CUDA_STATUS_OK, dbs_cuda_status_string(rc));
+    return std::make_tuple(tokens, scores);
+}
+
+// Full forward: returns (tokens, scores, parents, from_logprob) needed for backward.
+static std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+decode_forward_full_cuda(
+    torch::Tensor log_probs,
+    int64_t beam_size,
+    int64_t eos_token,
+    int64_t min_length,
+    int64_t validate_inputs) {
+    validate_eos_token_bound(eos_token);
+    validate_min_length_bound(min_length);
+    TORCH_CHECK(validate_inputs == 0 || validate_inputs == 1, "validate_inputs must be 0 or 1");
+    TORCH_CHECK(beam_size <= DBS_CUDA_FAST_MAX_BEAM,
+        "decode_forward_full_cuda requires beam_size <= ", DBS_CUDA_FAST_MAX_BEAM,
+        " (fast kernel only); got ", beam_size);
+    const bool unbatched = validate_cuda_log_probs_public(log_probs, beam_size);
+    c10::cuda::CUDAGuard device_guard(log_probs.device());
+    if (validate_inputs != 0) validate_cuda_log_prob_values(log_probs);
+
+    auto x4 = unbatched ? log_probs.unsqueeze(0) : log_probs;
+    auto x = x4.contiguous();
+    const int B = static_cast<int>(x.size(0));
+    const int T = static_cast<int>(x.size(1));
+    const int K = static_cast<int>(x.size(2));
+    const int V = static_cast<int>(x.size(3));
+    validate_cuda_decode_element_counts(B, T, K, V);
+
+    auto tokens       = torch::empty({B, T, K}, torch::TensorOptions().device(log_probs.device()).dtype(torch::kInt32));
+    auto scores       = torch::empty({B, K},    log_probs.options());
+    auto parents      = torch::empty({B, T, K}, torch::TensorOptions().device(log_probs.device()).dtype(torch::kInt32));
+    auto from_logprob = torch::empty({B, T, K}, torch::TensorOptions().device(log_probs.device()).dtype(torch::kUInt8));
+    const auto stream = at::cuda::getCurrentCUDAStream(log_probs.get_device());
+    const int rc = dbs_cuda_decode_forward_full(
+        x.data_ptr<float>(), B, T, K, V,
+        static_cast<int>(eos_token), static_cast<int>(min_length),
+        tokens.data_ptr<int32_t>(), scores.data_ptr<float>(),
+        parents.data_ptr<int32_t>(),
+        reinterpret_cast<uint8_t*>(from_logprob.data_ptr()),
+        stream.stream());
+    TORCH_CHECK(rc == DBS_CUDA_STATUS_OK, dbs_cuda_status_string(rc));
+    if (unbatched) {
+        return std::make_tuple(tokens.squeeze(0), scores.squeeze(0), parents.squeeze(0), from_logprob.squeeze(0));
+    }
+    return std::make_tuple(tokens, scores, parents, from_logprob);
+}
+
+// Sparse backward: compute (flat_index, value) pairs for every valid beam slot.
+// Call dbs_cuda_sparse_backward_scatter to accumulate into grad_log_probs.
+static std::tuple<torch::Tensor, torch::Tensor>
+backward_build_sparse_cuda(
+    torch::Tensor tokens,
+    torch::Tensor parents,
+    torch::Tensor from_logprob,
+    torch::Tensor final_scores,
+    torch::Tensor grad_output) {
+    TORCH_CHECK(tokens.is_cuda() && parents.is_cuda() && from_logprob.is_cuda() && final_scores.is_cuda() && grad_output.is_cuda(), "all tensors must be CUDA");
+    TORCH_CHECK(tokens.dtype() == torch::kInt32, "tokens must be int32");
+    TORCH_CHECK(parents.dtype() == torch::kInt32, "parents must be int32");
+    TORCH_CHECK(from_logprob.dtype() == torch::kUInt8, "from_logprob must be uint8");
+    TORCH_CHECK(final_scores.dtype() == torch::kFloat32, "final_scores must be float32");
+    TORCH_CHECK(grad_output.dtype() == torch::kFloat32, "grad_output must be float32");
+    TORCH_CHECK(tokens.dim() == 3, "tokens must be [B,T,K]");
+    TORCH_CHECK(parents.dim() == 3, "parents must be [B,T,K]");
+    TORCH_CHECK(from_logprob.dim() == 3, "from_logprob must be [B,T,K]");
+    TORCH_CHECK(final_scores.dim() == 2, "final_scores must be [B,K]");
+    TORCH_CHECK(grad_output.dim() == 2, "grad_output must be [B,K]");
+
+    const int B = static_cast<int>(tokens.size(0));
+    const int T = static_cast<int>(tokens.size(1));
+    const int K = static_cast<int>(tokens.size(2));
+    TORCH_CHECK(B > 0 && T > 0 && K > 0, "B, T, K must all be positive");
+    TORCH_CHECK(K <= DBS_CUDA_MAX_BEAM, "K exceeds CUDA backend maximum");
+    TORCH_CHECK(final_scores.size(0) == B && final_scores.size(1) == K, "final_scores shape mismatch");
+    TORCH_CHECK(grad_output.size(0) == B && grad_output.size(1) == K, "grad_output shape mismatch");
+
+    // Need vocab_size for index computation — infer from the calling context.
+    // Caller must pass the original log_probs vocab_size separately; here we
+    // accept it as a shape parameter on from_logprob since it's already B*T*K.
+    // Instead we rely on the caller to call scatter with correct grad_count = B*T*K*V.
+    // The kernel computes: index = ((b*T+t)*K + parent) * V + token, so V must be provided.
+    TORCH_CHECK(false, "Use backward_build_sparse_cuda_v(tokens, parents, from_logprob, final_scores, grad_output, vocab_size)");
+    return {};
+}
+
+// Correct version accepting vocab_size explicitly.
+static std::tuple<torch::Tensor, torch::Tensor>
+backward_build_sparse_cuda_v(
+    torch::Tensor tokens,
+    torch::Tensor parents,
+    torch::Tensor from_logprob,
+    torch::Tensor final_scores,
+    torch::Tensor grad_output,
+    int64_t vocab_size) {
+    TORCH_CHECK(tokens.is_cuda() && parents.is_cuda() && from_logprob.is_cuda() && final_scores.is_cuda() && grad_output.is_cuda(), "all tensors must be CUDA");
+    TORCH_CHECK(tokens.dtype() == torch::kInt32, "tokens must be int32");
+    TORCH_CHECK(parents.dtype() == torch::kInt32, "parents must be int32");
+    TORCH_CHECK(from_logprob.dtype() == torch::kUInt8, "from_logprob must be uint8");
+    TORCH_CHECK(final_scores.dtype() == torch::kFloat32, "final_scores must be float32");
+    TORCH_CHECK(grad_output.dtype() == torch::kFloat32, "grad_output must be float32");
+    TORCH_CHECK(tokens.dim() == 3 && parents.dim() == 3 && from_logprob.dim() == 3, "tokens/parents/from_logprob must be [B,T,K]");
+    TORCH_CHECK(final_scores.dim() == 2 && grad_output.dim() == 2, "final_scores/grad_output must be [B,K]");
+    TORCH_CHECK(vocab_size > 0, "vocab_size must be positive");
+
+    const int B = static_cast<int>(tokens.size(0));
+    const int T = static_cast<int>(tokens.size(1));
+    const int K = static_cast<int>(tokens.size(2));
+    TORCH_CHECK(B > 0 && T > 0 && K > 0, "B, T, K must all be positive");
+    TORCH_CHECK(K <= DBS_CUDA_MAX_BEAM, "K exceeds CUDA backend maximum");
+    TORCH_CHECK(final_scores.size(0) == B && final_scores.size(1) == K, "final_scores shape mismatch");
+    TORCH_CHECK(grad_output.size(0) == B && grad_output.size(1) == K, "grad_output shape mismatch");
+
+    c10::cuda::CUDAGuard device_guard(tokens.device());
+    auto tk = tokens.contiguous();
+    auto pr = parents.contiguous();
+    auto fl = from_logprob.contiguous();
+    auto fs = final_scores.contiguous();
+    auto go = grad_output.contiguous();
+
+    auto out_indices = torch::empty({B, T, K}, torch::TensorOptions().device(tokens.device()).dtype(torch::kInt64));
+    auto out_values  = torch::empty({B, T, K}, torch::TensorOptions().device(tokens.device()).dtype(torch::kFloat32));
+
+    const auto stream = at::cuda::getCurrentCUDAStream(tokens.get_device());
+    const int rc = dbs_cuda_backward_build_sparse(
+        tk.data_ptr<int32_t>(),
+        pr.data_ptr<int32_t>(),
+        reinterpret_cast<const uint8_t*>(fl.data_ptr()),
+        fs.data_ptr<float>(),
+        go.data_ptr<float>(),
+        B, T, K, static_cast<int>(vocab_size),
+        out_indices.data_ptr<int64_t>(),
+        out_values.data_ptr<float>(),
+        stream.stream());
+    TORCH_CHECK(rc == DBS_CUDA_STATUS_OK, dbs_cuda_status_string(rc));
+    return std::make_tuple(out_indices, out_values);
+}
+
+static int test_decode_forward_status(torch::Tensor log_probs, int64_t beam_size, int64_t eos_token, bool fast_path) {
+    const bool unbatched = validate_cuda_log_probs_public(log_probs, beam_size);
+    c10::cuda::CUDAGuard device_guard(log_probs.device());
+    auto x4 = unbatched ? log_probs.unsqueeze(0) : log_probs;
+    auto x = x4.contiguous();
+    const int B = static_cast<int>(x.size(0));
+    const int T = static_cast<int>(x.size(1));
+    const int K = static_cast<int>(x.size(2));
+    const int V = static_cast<int>(x.size(3));
+    validate_cuda_decode_element_counts(B, T, K, V);
+    auto tokens = torch::empty({B, T, K}, torch::TensorOptions().device(log_probs.device()).dtype(torch::kInt32));
+    auto scores = torch::empty({B, K}, log_probs.options());
+    const auto stream = at::cuda::getCurrentCUDAStream(log_probs.get_device());
+    if (fast_path) {
+        return dbs_cuda_decode_forward_fast_ex(
+            x.data_ptr<float>(), B, T, K, V, static_cast<int>(eos_token), 0,
+            tokens.data_ptr<int32_t>(), scores.data_ptr<float>(), stream.stream());
+    }
+    return dbs_cuda_decode_forward(
+        x.data_ptr<float>(), B, T, K, V, static_cast<int>(eos_token),
+        tokens.data_ptr<int32_t>(), scores.data_ptr<float>(), stream.stream());
+}
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-    m.def("final_scores_forward_cuda", &final_scores_forward_cuda, "DBS CUDA final scores forward for [T,K,V] or [B,T,K,V]");
-    m.def("final_scores_forward_cuda_exact_kernel", &final_scores_forward_cuda_exact_kernel, "DBS exact custom CUDA kernel final scores forward");
-    m.def("final_scores_forward_cuda_aten_topk", &final_scores_forward_cuda_aten_topk, "DBS ATen topk CUDA final scores forward");
+    m.def("final_scores_forward_cuda", &final_scores_forward_cuda, "DBS CUDA final scores forward for [T,K,V] or [B,T,K,V]", py::arg("log_probs"), py::arg("beam_size"), py::arg("eos_token"), py::arg("min_length") = 0, py::arg("validate_inputs") = 1);
+    m.def("decode_forward_cuda", &decode_forward_cuda_exact_kernel, "DBS CUDA decode forward returning tokens and final scores", py::arg("log_probs"), py::arg("beam_size"), py::arg("eos_token"), py::arg("min_length") = 0, py::arg("validate_inputs") = 1);
+    m.def("decode_forward_full_cuda", &decode_forward_full_cuda, "DBS CUDA full decode: tokens, scores, parents, from_logprob (needed for backward)", py::arg("log_probs"), py::arg("beam_size"), py::arg("eos_token") = -1, py::arg("min_length") = 0, py::arg("validate_inputs") = 1);
+    m.def("backward_build_sparse_cuda", &backward_build_sparse_cuda_v, "DBS CUDA sparse backward: build (flat_index, value) pairs; scatter with _test_sparse_backward_scatter", py::arg("tokens"), py::arg("parents"), py::arg("from_logprob"), py::arg("final_scores"), py::arg("grad_output"), py::arg("vocab_size"));
+    m.def("final_scores_forward_cuda_exact_kernel", &final_scores_forward_cuda_exact_kernel, "DBS exact custom CUDA kernel final scores forward", py::arg("log_probs"), py::arg("beam_size"), py::arg("eos_token"), py::arg("min_length") = 0, py::arg("validate_inputs") = 1);
+    m.def("final_scores_forward_cuda_aten_topk", &final_scores_forward_cuda_aten_topk, "DBS score-only ATen topk CUDA helper", py::arg("log_probs"), py::arg("beam_size"), py::arg("validate_inputs") = 1);
     m.def("_test_sparse_backward_scatter", &test_sparse_backward_scatter, "Test-only wrapper for DBS CUDA sparse backward scatter");
+    m.def("_test_decode_forward_fast_ex", &test_decode_forward_fast_ex, "Test-only wrapper for DBS CUDA fast decode with min_length");
+    m.def("_test_decode_forward_variable", &test_decode_forward_variable, "Test-only wrapper for DBS CUDA variable decode");
+    m.def("_test_decode_forward_status", &test_decode_forward_status, "Test-only direct CUDA decode status wrapper");
     m.def("cuda_available", []() { return dbs_cuda_available() != 0; });
 }
