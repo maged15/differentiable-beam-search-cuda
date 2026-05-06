@@ -8,38 +8,7 @@ Production status: not production-certified until `scripts/run_hardware_validati
 
 `dbs` is a C++17 beam-search decoder with deterministic hard beam output and sparse-first surrogate gradients. The forward pass still uses hard top-k beam selection, so the discrete operation is not exactly differentiable; backward computes an explicit surrogate gradient over selected beams and a relaxed candidate pool.
 
-## What changed in 1.0.0
-
-- Fixed the AVX-512 exponential range-reduction constant used by sigmoid/softmax-style gradient helpers.
-- Added internal scalar-vs-AVX-512 parity tests for exp, selected softmax weights, and relaxed top-k weights.
-- Enabled GCC target-attribute builds for AVX2/FMA and SSE4.2 helper paths.
-- Capped CUDA sparse scatter launches with a grid-stride loop to avoid int grid overflow on large sparse gradients.
-- Aligned shared-library `SOVERSION` with C ABI `10`, and expanded the metadata gate to check ABI/SOVERSION/license consistency.
-- CUDA unbatched `[T,K,V]` inputs are normalized in the public Python wrapper before calling the rank-4 native CUDA extension.
-- CUDA kernels synchronize by default for correctness-oriented status reporting; use `dbs_cuda_set_synchronization(0)` only when async launch semantics are explicitly desired.
-- CUDA Python forward now supports `min_length`, rejects NaN/+Inf when `validate_inputs=1`, and exposes an optional `decode()` helper for CUDA token traces.
-- CUDA fast-math is opt-in for CMake and setup.py builds; correctness/release validation builds leave it disabled.
-- Non-CUDA CMake builds now export a stable `dbs::dbs_cuda` stub target.
-- License text is consistently MIT.
-- Version metadata uses `VERSION` as the source of truth for Python packaging; CMake library `VERSION` remains `1.0.0` and shared-library `SOVERSION` follows C ABI `10`.
-- Versioning docs explicitly separate Python package prerelease, CMake library version, and C ABI version.
-
-- Public tests now treat `[B,T,K,V]` with `B=1` as valid and reject only true beam-size/rank/dimension errors.
-- Version metadata is checked from one source: `VERSION`; `pyproject.toml` declares the version as dynamic.
-
-
-- `dbs_backward()` is now sparse by default. Dense gradients are opt-in through `dbs_backward_dense()` and remain protected by `max_dense_gradient_elements`.
-- Added a model-step callback API: `dbs_decode_model_steps()` and `dbs_decode_model_steps_with_workspace()`.
-- Added reusable workspace APIs for callback decoding: `dbs_workspace_create()`, `dbs_workspace_reserve()`, and `dbs_workspace_allocated_bytes()`.
-- Added variable batch decode: per-example steps, beam sizes, EOS tokens, min lengths, banned tokens, and forced tokens.
-- Added advanced constraints: repetition penalty, no-repeat n-gram, and token-filter callback via `DBSAdvancedConstraintsC`.
-- Added observability through `DBSStatsC`: selected kernel, sparse/dense backward mode, model-step usage, timing, allocation estimate, result sizes, sparse nnz, and error category.
-- Added CPU feature discovery plus real AVX2/SSE4.2/NEON kernels for dot/softmax normalization paths. AVX-512 remains the most complete optimized path; top-k candidate scanning still uses AVX-512 or scalar correctness paths.
-- Added PyTorch C++ extension packaging plus a `torch.autograd.Function` wrapper.
-- Added JAX `custom_vjp` host-callback wrapper for CPU validation.
-- Replaced the CUDA scaffold with real CUDA source kernels for batched hard forward decode and sparse backward scatter. The CUDA implementation is intentionally conservative: one device thread decodes one batch example, so it is a correctness backend, not yet a high-throughput fused GPU decoder.
-- Expanded C++ tests and benchmark matrix.
-- Expanded CI matrix for GCC, Clang, MSVC, Linux, macOS, Windows, sanitizer builds, and Python wheel build.
+Release history lives in [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Build
 
@@ -239,7 +208,7 @@ Sparse gradients are flattened `[T * K * V]` indices plus values. Dense gradient
 ## Current limitations
 
 - CUDA forward is wired into the optional PyTorch extension, but CUDA autograd backward is not implemented. This is a CPU-autograd/CUDA-forward package until GPU sparse surrogate backward passes parity tests. ROCm is not included.
-- AVX2/SSE4.2/NEON kernels cover dot and softmax normalization paths; top-k scanning is still AVX-512-or-scalar.
+- AVX2/SSE4.2/NEON optimized coverage differs by operation; NEON remains dot/softmax-oriented, while x86 SIMD covers vocabulary scanning where available.
 - PyTorch and JAX integrations are CPU-first. TensorFlow and ONNX Runtime are not included.
 - Model-step decoding is functional but recomputes partial prefixes to expose prior beam state; a fused incremental decoder should replace it for high-throughput production.
 - No hardware-counter profiling or NUMA-aware scheduler is included.
