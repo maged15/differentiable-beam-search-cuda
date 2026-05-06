@@ -1,3 +1,4 @@
+import pytest
 import torch
 
 from torch_dbs_extension import DBSOptions, final_scores
@@ -23,11 +24,8 @@ def test_autograd_cpu_bfloat16_promotes_and_returns_bfloat16_grad():
 
 def test_cuda_forward_parity_if_extension_available():
     if not torch.cuda.is_available():
-        return
-    try:
-        import dbs_torch_cuda_ext  # noqa: F401
-    except ImportError:
-        return
+        pytest.skip("CUDA unavailable")
+    pytest.importorskip("dbs_torch_cuda_ext")
     opts = DBSOptions(beam_size=2, eos_token=-1)
     x = torch.randn(4, 2, 64, dtype=torch.float32)
     x = torch.log_softmax(x, dim=-1)

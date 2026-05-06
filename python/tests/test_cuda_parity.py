@@ -15,6 +15,9 @@ import torch
 from torch_dbs_extension import DBSOptions, decode, final_scores
 
 
+INVALID_ARGUMENT_MSG = "invalid argument"
+
+
 def _require_cuda_ext():
     if not torch.cuda.is_available():
         pytest.skip("CUDA device unavailable")
@@ -62,11 +65,11 @@ def test_cuda_sparse_scatter_rejects_invalid_indices():
     values = torch.tensor([1.0, 2.0], device="cuda", dtype=torch.float32)
 
     negative = torch.tensor([0, -1], device="cuda", dtype=torch.int64)
-    with pytest.raises(RuntimeError, match="invalid argument"):
+    with pytest.raises(RuntimeError, match=INVALID_ARGUMENT_MSG):
         ext._test_sparse_backward_scatter(negative, values, 3)
 
     too_large = torch.tensor([0, 3], device="cuda", dtype=torch.int64)
-    with pytest.raises(RuntimeError, match="invalid argument"):
+    with pytest.raises(RuntimeError, match=INVALID_ARGUMENT_MSG):
         ext._test_sparse_backward_scatter(too_large, values, 3)
 
 
@@ -173,7 +176,7 @@ def test_cuda_variable_decode_rejects_invalid_per_example_metadata():
         (steps, beams, eos, torch.tensor([-1, 0], device="cuda", dtype=torch.int32)),
     ]
     for bad_steps, bad_beams, bad_eos, bad_min_lengths in bad_cases:
-        with pytest.raises(RuntimeError, match="invalid argument"):
+        with pytest.raises(RuntimeError, match=INVALID_ARGUMENT_MSG):
             ext._test_decode_forward_variable(x, bad_steps, bad_beams, bad_eos, bad_min_lengths)
 
 
@@ -193,7 +196,7 @@ def test_cuda_variable_decode_initializes_ragged_trailing_outputs():
     scores_cpu = scores.detach().cpu()
     assert torch.equal(tokens_cpu[0, :2, 1], torch.full((2,), -1, dtype=torch.int32))
     assert torch.equal(tokens_cpu[0, 2], torch.full((2,), -1, dtype=torch.int32))
-    assert scores_cpu[0, 1].item() == -float("inf")
+    assert torch.isneginf(scores_cpu[0, 1])
     assert torch.isfinite(scores_cpu[0, 0])
     assert torch.isfinite(scores_cpu[1]).all()
 
@@ -225,7 +228,7 @@ def test_cuda_exact_kernel_uses_current_stream():
     stream.synchronize()
     cpu_scores = torch.stack([final_scores(x_cpu[b], opts).detach() for b in range(x_cpu.size(0))], dim=0)
     torch.testing.assert_close(y.cpu(), cpu_scores, rtol=1e-5, atol=1e-5)
-    assert marker.item() == 1.0
+    torch.testing.assert_close(marker.cpu(), torch.tensor(1.0))
 
 
 def test_cuda_tie_and_near_tie_exact_parity(monkeypatch):
