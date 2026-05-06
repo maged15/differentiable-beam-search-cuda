@@ -17,43 +17,77 @@ def _require_cuda_ext():
         pytest.skip("dbs_torch_cuda_ext not built")
 
 
-def test_cuda_selected_path_backward_batched_smoke():
+def _assert_cuda_matches_cpu_forward_backward(x_cpu, opts, grad_out):
+    cpu_x = x_cpu.detach().clone().requires_grad_(True)
+    cuda_x = x_cpu.detach().clone().cuda().requires_grad_(True)
+
+    cpu_y = final_scores(cpu_x, opts)
+    cuda_y = final_scores(cuda_x, opts)
+    torch.testing.assert_close(cuda_y.detach().cpu(), cpu_y.detach(), rtol=1e-5, atol=1e-5)
+
+    cpu_y.backward(grad_out)
+    cuda_y.backward(grad_out.cuda())
+    assert cuda_x.grad is not None
+    assert cuda_x.grad.is_cuda
+    torch.testing.assert_close(cuda_x.grad.detach().cpu(), cpu_x.grad.detach(), rtol=1e-5, atol=1e-5)
+
+
+def test_cuda_backward_matches_cpu_batched_default_options():
     _require_cuda_ext()
     torch.manual_seed(2027)
     x_cpu = torch.randn(2, 3, 2, 17, dtype=torch.float32)
     x_cpu = torch.log_softmax(x_cpu, dim=-1)
-    x = x_cpu.cuda().requires_grad_(True)
-
-    y = final_scores(x, DBSOptions(beam_size=2, eos_token=-1, validate_inputs=1))
-    y.sum().backward()
-
-    assert x.grad is not None
-    assert x.grad.shape == x.shape
-    assert x.grad.is_cuda
-    assert torch.isfinite(x.grad).all()
-    assert torch.count_nonzero(x.grad).item() > 0
-    assert torch.count_nonzero(x.grad).item() <= 2 * 3 * 2
+    grad_out = torch.tensor([[1.0, -0.25], [0.5, 0.75]], dtype=torch.float32)
+    _assert_cuda_matches_cpu_forward_backward(
+        x_cpu,
+        DBSOptions(beam_size=2, eos_token=-1, validate_inputs=1),
+        grad_out,
+    )
 
 
-def test_cuda_selected_path_backward_unbatched_smoke():
+def test_cuda_backward_matches_cpu_unbatched_eos_min_length():
     _require_cuda_ext()
     torch.manual_seed(2028)
-    x = torch.randn(3, 2, 19, device="cuda", dtype=torch.float32)
-    x = torch.log_softmax(x, dim=-1).detach().requires_grad_(True)
+    x_cpu = torch.randn(3, 2, 19, dtype=torch.float32)
+    x_cpu = torch.log_softmax(x_cpu, dim=-1)
+    grad_out = torch.tensor([0.5, -1.25], dtype=torch.float32)
+    _assert_cuda_matches_cpu_forward_backward(
+        x_cpu,
+        DBSOptions(beam_size=2, eos_token=3, min_length=2, validate_inputs=1),
+        grad_out,
+    )
 
-    y = final_scores(x, DBSOptions(beam_size=2, eos_token=3, min_length=2, validate_inputs=1))
-    y[0].backward()
 
-    assert x.grad is not None
-    assert x.grad.shape == x.shape
-    assert torch.isfinite(x.grad).all()
-
-
-def test_cuda_large_beam_backward_raises_cleanly():
+def test_cuda_backward_matches_cpu_non_default_options():
     _require_cuda_ext()
-    x = torch.randn(1, 2, 33, 11, device="cuda", dtype=torch.float32)
-    x = torch.log_softmax(x, dim=-1).detach().requires_grad_(True)
-    y = final_scores(x, DBSOptions(beam_size=33, eos_token=-1, validate_inputs=1))
+    torch.manual_seed(2029)
+    x_cpu = torch.randn(2, 4, 3, 23, dtype=torch.float32)
+    x_cpu = torch.log_softmax(x_cpu, dim=-1)
+    grad_out = torch.tensor([[0.25, -0.5, 1.0], [1.5, -1.0, 0.125]], dtype=torch.float32)
+    opts = DBSOptions(
+        beam_size=3,
+        eos_token=5,
+        selected_temperature=0.7,
+        soft_topk_temperature=0.4,
+        relaxed_pool_multiplier=3,
+        vocab_block=7,
+        length_penalty_alpha=0.35,
+        soft_topk_tolerance=1.0e-5,
+        soft_topk_max_iters=64,
+        min_length=2,
+        validate_inputs=1,
+    )
+    _assert_cuda_matches_cpu_forward_backward(x_cpu, opts, grad_out)
 
-    with pytest.raises(RuntimeError, match="beam_size <= DBS_CUDA_FAST_MAX_BEAM"):
-        y.sum().backward()
+
+def test_cuda_large_beam_backward_matches_cpu():
+    _require_cuda_ext()
+    torch.manual_seed(2030)
+    x_cpu = torch.randn(1, 2, 33, 11, dtype=torch.float32)
+    x_cpu = torch.log_softmax(x_cpu, dim=-1)
+    grad_out = torch.linspace(-1.0, 1.0, 33, dtype=torch.float32).unsqueeze(0)
+    _assert_cuda_matches_cpu_forward_backward(
+        x_cpu,
+        DBSOptions(beam_size=33, eos_token=-1, validate_inputs=1),
+        grad_out,
+    )

@@ -12,4 +12,4 @@ Use these gradients for surrogate-gradient training and validation experiments. 
 
 ## CUDA gradient status
 
-CPU backward defaults to sparse surrogate gradients. CUDA PyTorch autograd supports a limited selected-path sparse surrogate backward for `beam_size <= 32`, using the trace emitted by the cooperative CUDA forward kernel. Larger CUDA beams are forward-only until a trace-emitting large-beam kernel is added. Hard beam selection remains discontinuous; gradients are surrogate gradients, not exact derivatives of top-k selection.
+CPU backward defaults to sparse surrogate gradients. Public PyTorch CUDA `final_scores()` backward uses the CPU semantic implementation internally and returns CUDA gradients, so CPU/CUDA tensor gradients are expected to match for this public API. The direct CUDA C sparse-backward helper is a limited selected-path estimator used for low-level validation; it does not implement the full lower-level CPU selected-weight plus relaxed-pool surrogate contract. Hard beam selection remains discontinuous; gradients are surrogate gradients, not exact derivatives of top-k selection.

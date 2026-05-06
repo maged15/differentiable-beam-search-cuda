@@ -36,7 +36,7 @@
 
 `dbs_cuda_decode_forward_fast()` is the cooperative CUDA forward path. It uses one block per batch example, threads cooperatively scan vocabulary entries, and a deterministic shared-memory reduction selects the top beams. For `beam_size > 32`, it falls back to the serial CUDA correctness kernel. Device tensors are expected to be contiguous FP32.
 
-CUDA autograd is limited to the selected-path sparse surrogate backward for `beam_size <= 32`; larger beams are forward-only on CUDA. Run `python/tests/test_cuda_parity.py` on NVIDIA hardware before enabling CUDA in any training or inference path.
+Public PyTorch CUDA autograd uses CPU-equivalent semantic fallback for `final_scores()` backward and returns CUDA gradients. Direct CUDA C sparse-backward helpers are limited selected-path utilities. Run `python/tests/test_cuda_parity.py` and `python/tests/test_cuda_backward.py` on NVIDIA hardware before enabling CUDA in any training or inference path.
 
 ## v1.0 observability and gate APIs
 
@@ -51,4 +51,4 @@ CUDA autograd is limited to the selected-path sparse surrogate backward for `bea
 
 ## PyTorch public tensor API
 
-The compiled wrapper `torch_dbs_extension.final_scores()` accepts `[T,K,V]` and `[B,T,K,V]` on both CPU and CUDA. CPU supports surrogate autograd. CUDA supports hard forward and limited selected-path sparse surrogate backward for `beam_size <= 32`. See `docs/PYTORCH_API.md`.
+The compiled wrapper `torch_dbs_extension.final_scores()` accepts `[T,K,V]` and `[B,T,K,V]` on both CPU and CUDA. CPU and CUDA tensors share the same public option and autograd semantics; CUDA uses native forward where equivalent and CPU semantic fallback where needed. See `docs/PYTORCH_API.md`.

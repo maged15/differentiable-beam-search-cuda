@@ -116,10 +116,13 @@ int dbs_cuda_decode_forward_full(
     uint8_t* device_from_logprob,
     void* cuda_stream);
 
-/* Sparse backward: build (flat_index, value) pairs for every valid selected-beam
- * slot using a softmax surrogate over final_scores.  Pass the result to
- * dbs_cuda_sparse_backward_scatter to accumulate into grad_log_probs.
- * out_indices and out_values must have B*T*K elements each. */
+/* Limited sparse backward helper: build (flat_index, value) pairs for valid
+ * selected-beam slots using a score-softmax estimator over final_scores. This
+ * helper is intentionally narrower than the CPU C ABI backward, which also
+ * supports selected-weight and relaxed-pool surrogate gradients. Public
+ * PyTorch CUDA autograd uses CPU semantic fallback for full final_scores()
+ * parity. Pass the result to dbs_cuda_sparse_backward_scatter to accumulate
+ * into grad_log_probs. out_indices and out_values must have B*T*K elements. */
 int dbs_cuda_backward_build_sparse(
     const int32_t* device_tokens,
     const int32_t* device_parents,

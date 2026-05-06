@@ -16,4 +16,4 @@ The CUDA extension defaults to the exact custom kernel. The optimized ATen `topk
 
 ## Package framing
 
-This is a CPU-autograd/CUDA-limited-backward release. It is not a full CUDA differentiable beam-search training package until CUDA surrogate backward has CPU/GPU parity evidence across the full option matrix and large-beam trace support.
+This is a CPU-autograd/CUDA-semantic-parity release for the public PyTorch `final_scores()` API. It is not a fully fused CUDA differentiable beam-search training package until native CUDA surrogate backward has full selected-weight and relaxed-pool parity across the full option matrix.
