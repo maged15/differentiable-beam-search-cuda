@@ -34,9 +34,9 @@
 
 ## CUDA backend API
 
-`dbs_cuda_decode_forward_fast()` is the cooperative CUDA forward path. It uses one block per batch example, threads cooperatively scan vocabulary entries, and a deterministic shared-memory reduction selects the top beams. For `beam_size > 32`, it falls back to the serial CUDA correctness kernel. Device tensors are expected to be contiguous FP32.
+`dbs_cuda_decode_forward_fast()` is the cooperative CUDA forward path. It uses one block per batch example, threads cooperatively scan vocabulary entries, and a deterministic shared-memory reduction selects the top beams. `beam_size <= 32` uses the cooperative path. For `beam_size > 32`, direct CUDA C calls fall back to the serial CUDA correctness kernel, which launches one device thread per batch item and is not a throughput path. Device tensors are expected to be contiguous FP32.
 
-Public PyTorch CUDA autograd uses CPU-equivalent semantic fallback for `final_scores()` backward and returns CUDA gradients. Direct CUDA C sparse-backward helpers are limited selected-path utilities. Run `python/tests/test_cuda_parity.py` and `python/tests/test_cuda_backward.py` on NVIDIA hardware before enabling CUDA in any training or inference path.
+Public PyTorch CUDA `final_scores()` uses native CUDA forward only for the supported fast hard-forward cases. Larger beams and CPU-only shaping options use CPU-equivalent semantic fallback and return CUDA tensors/gradients. Direct CUDA C sparse-backward helpers are limited selected-path utilities. Run `python/tests/test_cuda_parity.py` and `python/tests/test_cuda_backward.py` on NVIDIA hardware before enabling CUDA in any training or inference path.
 
 ## v1.0 observability and gate APIs
 

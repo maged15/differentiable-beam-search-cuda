@@ -637,11 +637,15 @@ extern "C" int dbs_cuda_decode_forward_fast_ex(
     int rc = validate_launch_grid_x(batch_size);
     if (rc != DBS_CUDA_STATUS_OK) return rc;
     if (beam_size > DBS_CUDA_FAST_MAX_BEAM) {
+        // Correctness fallback only: this path is intentionally not used by the
+        // public PyTorch tensor API for K > DBS_CUDA_FAST_MAX_BEAM.
         cudaStream_t stream = reinterpret_cast<cudaStream_t>(cuda_stream);
         dbs_forward_kernel<<<batch_size, 1, 0, stream>>>(device_log_probs, batch_size, steps, beam_size, vocab_size, eos_token, min_length, nullptr, nullptr, nullptr, nullptr, device_tokens, device_final_scores);
         return finish_cuda(cudaPeekAtLastError(), stream);
     }
     cudaStream_t stream = reinterpret_cast<cudaStream_t>(cuda_stream);
+    // For validated dense inputs the fast kernel writes every [B,T,K] token and
+    // [B,K] score slot, so a separate initialization kernel is unnecessary.
     dbs_forward_fast_kernel<<<batch_size, DBS_CUDA_FAST_THREADS, 0, stream>>>(device_log_probs, batch_size, steps, beam_size, vocab_size, eos_token, min_length, device_tokens, device_final_scores, nullptr, nullptr);
     return finish_cuda(cudaPeekAtLastError(), stream);
 }

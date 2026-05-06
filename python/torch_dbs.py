@@ -9,17 +9,39 @@ compatibility with standard autograd optimizers.
 from __future__ import annotations
 
 import ctypes
+from functools import lru_cache
 import os
 from dataclasses import dataclass
 from typing import Optional
+import weakref
 
 import torch
+
+_DBS_ABI_VERSION = 10
+_DBS_OPTIONS_C_SIZE = 64
+_DBS_OPTIONS_C_OFFSETS = {
+    "beam_size": 0,
+    "eos_token": 4,
+    "selected_temperature": 8,
+    "soft_topk_temperature": 12,
+    "relaxed_pool_multiplier": 16,
+    "vocab_block": 20,
+    "length_penalty_alpha": 24,
+    "soft_topk_tolerance": 28,
+    "soft_topk_max_iters": 32,
+    "min_length": 36,
+    "validate_inputs": 40,
+    "_pad0": 44,
+    "max_dense_gradient_elements": 48,
+    "reserved0": 56,
+    "reserved1": 60,
+}
 
 
 class DBSOptionsC(ctypes.Structure):
     # Mirrors DBSOptionsC from include/dbs.h exactly.
-    # max_dense_gradient_elements is int64_t; the compiler inserts 4 bytes of
-    # padding after validate_inputs (offset 40) to align the 8-byte field.
+    # max_dense_gradient_elements is int64_t; _pad0 makes the C compiler's
+    # natural 4-byte alignment padding explicit so offset checks can fail fast.
     _fields_ = [
         ("beam_size", ctypes.c_int),
         ("eos_token", ctypes.c_int),
@@ -37,6 +59,21 @@ class DBSOptionsC(ctypes.Structure):
         ("reserved0", ctypes.c_int),
         ("reserved1", ctypes.c_int),
     ]
+
+
+def _assert_options_c_layout() -> None:
+    actual_size = ctypes.sizeof(DBSOptionsC)
+    if actual_size != _DBS_OPTIONS_C_SIZE:
+        raise RuntimeError(f"DBSOptionsC ctypes size {actual_size} != ABI {_DBS_OPTIONS_C_SIZE}")
+    for name, expected_offset in _DBS_OPTIONS_C_OFFSETS.items():
+        actual_offset = getattr(DBSOptionsC, name).offset
+        if actual_offset != expected_offset:
+            raise RuntimeError(
+                f"DBSOptionsC.{name} offset {actual_offset} != ABI {expected_offset}"
+            )
+
+
+_assert_options_c_layout()
 
 
 @dataclass(frozen=True)
@@ -77,12 +114,17 @@ class DBSOptions:
 class _DBSLib:
     def __init__(self, path: Optional[str] = None) -> None:
         if path is None:
-            path = os.environ.get("DBS_LIBRARY", "libdbs.so")
+            raise ValueError("path must be resolved before loading libdbs")
         self.lib = ctypes.CDLL(path)
         self._bind()
+        abi = self.lib.dbs_abi_version()
+        if abi != _DBS_ABI_VERSION:
+            raise RuntimeError(f"libdbs ABI {abi} != expected {_DBS_ABI_VERSION}")
 
     def _bind(self) -> None:
         lib = self.lib
+        lib.dbs_abi_version.argtypes = []
+        lib.dbs_abi_version.restype = ctypes.c_int
         lib.dbs_create.argtypes = [DBSOptionsC]
         lib.dbs_create.restype = ctypes.c_void_p
         lib.dbs_destroy.argtypes = [ctypes.c_void_p]
@@ -123,23 +165,35 @@ class _DBSLib:
         raise RuntimeError((msg or b"libdbs call failed").decode("utf-8", errors="replace"))
 
 
+def _resolve_library_path(path: Optional[str]) -> str:
+    return path if path is not None else os.environ.get("DBS_LIBRARY", "libdbs.so")
+
+
+@lru_cache(maxsize=None)
+def _get_dbs_lib(path: str) -> _DBSLib:
+    return _DBSLib(path)
+
+
+def _release_c_state(dbs: _DBSLib, handle: int, result: int) -> None:
+    if result:
+        dbs.lib.dbs_free_result(result)
+    if handle:
+        dbs.lib.dbs_destroy(handle)
+
+
 class _CState:
     def __init__(self, dbs: _DBSLib, handle: int, result: int) -> None:
         self.dbs = dbs
         self.handle = handle
         self.result = result
-        self.closed = False
+        self._finalizer = weakref.finalize(self, _release_c_state, dbs, handle, result)
 
     def close(self) -> None:
-        if not self.closed:
-            if self.result:
-                self.dbs.lib.dbs_free_result(self.result)
-            if self.handle:
-                self.dbs.lib.dbs_destroy(self.handle)
-            self.closed = True
+        self._finalizer()
 
-    def __del__(self) -> None:
-        self.close()
+    @property
+    def closed(self) -> bool:
+        return not self._finalizer.alive
 
 
 class _DBSFinalScores(torch.autograd.Function):
@@ -160,7 +214,7 @@ class _DBSFinalScores(torch.autograd.Function):
             raise ValueError("eos_token must be -1 or non-negative")
         if options.eos_token >= V:
             raise ValueError("eos_token must be less than log_probs.shape[2]")
-        dbs = _DBSLib(lib_path)
+        dbs = _get_dbs_lib(_resolve_library_path(lib_path))
         handle = dbs.lib.dbs_create(options.as_c())
         if not handle:
             raise RuntimeError("dbs_create failed")

@@ -305,22 +305,20 @@ static bool prefix_contains_token(const std::vector<int32_t>& prefix, int token)
 static bool would_repeat_ngram(const std::vector<int32_t>& prefix, int token, int n) {
     if (n <= 0) return false;
     if (n == 1) return prefix_contains_token(prefix, token);
-    if (static_cast<int>(prefix.size()) + 1 < n) return false;
+    const int prefix_len = static_cast<int>(prefix.size());
+    if (prefix_len + 1 < n) return false;
 
-    std::vector<int32_t> tail;
-    tail.reserve(static_cast<size_t>(n));
-    const int start = static_cast<int>(prefix.size()) - (n - 1);
-    for (int i = start; i < static_cast<int>(prefix.size()); ++i) tail.push_back(prefix[static_cast<size_t>(i)]);
-    tail.push_back(token);
+    const int suffix_start = prefix_len - (n - 1);
 
-    for (int i = 0; i + n <= static_cast<int>(prefix.size()); ++i) {
+    for (int i = 0; i + n <= prefix_len; ++i) {
         bool same = true;
-        for (int j = 0; j < n; ++j) {
-            if (prefix[static_cast<size_t>(i + j)] != tail[static_cast<size_t>(j)]) {
+        for (int j = 0; j < n - 1; ++j) {
+            if (prefix[static_cast<size_t>(i + j)] != prefix[static_cast<size_t>(suffix_start + j)]) {
                 same = false;
                 break;
             }
         }
+        if (same && prefix[static_cast<size_t>(i + n - 1)] != token) same = false;
         if (same) return true;
     }
     return false;

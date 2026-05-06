@@ -61,7 +61,9 @@ int dbs_cuda_decode_forward(
 
 /* Cooperative CUDA backend. One block decodes one batch example; threads cooperatively
  * scan vocabulary blocks and reduce deterministic top-k candidates in shared memory.
- * Falls back to the serial device kernel internally when beam_size exceeds the fast path. */
+ * beam_size <= DBS_CUDA_FAST_MAX_BEAM uses the cooperative path. Larger beams
+ * fall back to a serial correctness kernel that launches one device thread per
+ * batch item; do not treat that fallback as a throughput CUDA implementation. */
 int dbs_cuda_decode_forward_fast(
     const float* device_log_probs,
     int batch_size,
@@ -101,7 +103,9 @@ int dbs_cuda_decode_forward_variable(
 
 /* Full forward: identical to decode_forward_fast_ex but also writes
  * parents[B,T,K] and from_logprob[B,T,K] needed for sparse backward.
- * beam_size must be <= DBS_CUDA_FAST_MAX_BEAM. */
+ * beam_size must be <= DBS_CUDA_FAST_MAX_BEAM because the serial fallback does
+ * not emit parent/from_logprob traces. Public PyTorch final_scores() uses CPU
+ * semantic fallback for larger CUDA beam sizes. */
 int dbs_cuda_decode_forward_full(
     const float* device_log_probs,
     int batch_size,

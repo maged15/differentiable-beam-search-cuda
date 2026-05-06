@@ -2,7 +2,7 @@
 
 Forward decoding uses hard beam selection, which is discontinuous. The backward API exposes a surrogate gradient. It is useful for experiments but is not a mathematically exact derivative through top-k beam search.
 
-The CUDA backend is correctness-first. EOS-aware decoding is supported, but constraint-heavy decoding still belongs on the CPU path. Treat EOS/constraint performance as validation-oriented until dedicated fused kernels are added.
+The CUDA backend is correctness-first. Native cooperative CUDA forward currently covers hard-forward cases with `beam_size <= 32`; larger public PyTorch CUDA `final_scores()` calls use CPU semantic fallback. Direct CUDA C calls can still use a serial correctness fallback for larger beams, but that path launches one device thread per batch item and is not a throughput implementation. EOS-aware decoding is supported, but constraint-heavy decoding still belongs on the CPU path. Treat EOS/constraint performance as validation-oriented until dedicated fused kernels are added.
 
 The CUDA PyTorch extension can use ATen CUDA `topk` for the common no-EOS fast path when `DBS_ENABLE_SCORE_ONLY_FAST_PATH=1` is set. This gives strong practical performance and parity for score-only workloads, but it is not a single fused custom kernel.
 
