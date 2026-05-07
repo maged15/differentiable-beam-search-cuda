@@ -113,7 +113,10 @@ class _Lib:
     def __init__(self, path: Optional[str] = None) -> None:
         if path is None:
             raise ValueError("path must be resolved before loading libdbs")
-        self.lib = ctypes.CDLL(path)
+        try:
+            self.lib = ctypes.CDLL(path)
+        except OSError as exc:
+            raise _library_load_error(path, exc) from exc
         self.lib.dbs_abi_version.argtypes = []
         self.lib.dbs_abi_version.restype = ctypes.c_int
         abi = self.lib.dbs_abi_version()
@@ -148,6 +151,14 @@ class _Lib:
 
 def _resolve_library_path(path: Optional[str]) -> str:
     return path if path is not None else os.environ.get("DBS_LIBRARY", "libdbs.so")
+
+
+def _library_load_error(path: str, exc: OSError) -> RuntimeError:
+    return RuntimeError(
+        f"Unable to load libdbs from {path!r}: {exc}. Build libdbs first, then set "
+        "DBS_LIBRARY to the full shared-library path or add the build directory to "
+        "LD_LIBRARY_PATH, DYLD_LIBRARY_PATH, or PATH."
+    )
 
 
 @lru_cache(maxsize=None)
