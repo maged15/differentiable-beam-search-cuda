@@ -1,5 +1,7 @@
 import ctypes
 
+import pytest
+
 import torch_dbs
 
 
@@ -32,6 +34,20 @@ def test_torch_ctypes_library_cache_reuses_loaded_library(monkeypatch):
     assert first is second
     assert third is not first
     assert constructed == ["/tmp/libdbs-a.so", "/tmp/libdbs-b.so"]
+    torch_dbs._get_dbs_lib.cache_clear()
+
+
+def test_torch_ctypes_library_load_error_is_actionable(monkeypatch):
+    torch_dbs._get_dbs_lib.cache_clear()
+
+    def fail_to_load(path):
+        raise OSError("cannot open shared object file")
+
+    monkeypatch.setattr(torch_dbs.ctypes, "CDLL", fail_to_load)
+
+    with pytest.raises(RuntimeError, match="Unable to load libdbs"):
+        torch_dbs._get_dbs_lib("/missing/libdbs.so")
+
     torch_dbs._get_dbs_lib.cache_clear()
 
 

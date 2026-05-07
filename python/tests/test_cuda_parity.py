@@ -409,14 +409,15 @@ def test_cuda_public_api_supports_each_cpu_semantic_fallback_option(option_name,
     torch.testing.assert_close(cuda_scores, cpu_scores, rtol=1e-5, atol=1e-5)
 
 
-def test_cuda_public_api_uses_cpu_semantic_fallback_for_large_beam():
+@pytest.mark.parametrize(("beam_size", "expected_native"), [(32, True), (33, False), (64, False), (65, False)])
+def test_cuda_public_api_routes_beam_limit_edges(beam_size, expected_native):
     _require_cuda_ext()
-    torch.manual_seed(618)
-    x_cpu = torch.randn(1, 2, 33, 17, dtype=torch.float32)
+    torch.manual_seed(618 + beam_size)
+    x_cpu = torch.randn(1, 2, beam_size, 17, dtype=torch.float32)
     x_cpu = torch.log_softmax(x_cpu, dim=-1)
-    opts = DBSOptions(beam_size=33, eos_token=-1, validate_inputs=1)
+    opts = DBSOptions(beam_size=beam_size, eos_token=-1, validate_inputs=1)
 
-    assert not dbs_ext._native_cuda_forward_supported(opts)
+    assert dbs_ext._native_cuda_forward_supported(opts) is expected_native
     cpu_scores = final_scores(x_cpu, opts).detach()
     cuda_scores = final_scores(x_cpu.cuda(), opts).detach().cpu()
     torch.testing.assert_close(cuda_scores, cpu_scores, rtol=1e-5, atol=1e-5)
