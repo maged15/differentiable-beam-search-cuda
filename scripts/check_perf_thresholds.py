@@ -58,8 +58,11 @@ def is_large_case(row):
 def check_large_case_thresholds(row, index, args):
     label = row_label(row, index)
     failures = []
-    if row["speedup"] < args.min_large_cpu_speedup:
-        failures.append(f"{label}: CUDA/CPU speedup {row['speedup']} < {args.min_large_cpu_speedup}")
+    min_cpu_ratio = args.min_large_cpu_speedup
+    if min_cpu_ratio is None:
+        min_cpu_ratio = 1.0 / args.max_cuda_vs_cpu_slowdown
+    if row["speedup"] < min_cpu_ratio:
+        failures.append(f"{label}: DBS CUDA is too slow vs CPU ratio={row['speedup']}")
     # cuda_vs_torch_speedup = torch_ms / dbs_cuda_ms. Values < 0.5 mean DBS is >2x slower than torch ref.
     if row["torch_speedup"] < 1.0 / args.max_cuda_vs_torch_slowdown:
         failures.append(f"{label}: DBS CUDA is too slow vs torch reference ratio={row['torch_speedup']}")
@@ -69,11 +72,21 @@ def check_large_case_thresholds(row, index, args):
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("csv_path", nargs="?", default="benchmarks/results/bench-dbs-cuda-direct.csv")
-    ap.add_argument("--min-large-cpu-speedup", type=float, default=fenv("DBS_MIN_LARGE_CPU_SPEEDUP", 2.0))
+    ap.add_argument("--max-cuda-vs-cpu-slowdown", type=float, default=fenv("DBS_MAX_CUDA_VS_CPU_SLOWDOWN", 2.0))
+    ap.add_argument("--min-large-cpu-speedup", type=float, default=None, help=argparse.SUPPRESS)
     ap.add_argument("--max-cuda-vs-torch-slowdown", type=float, default=fenv("DBS_MAX_CUDA_VS_TORCH_SLOWDOWN", 2.0))
     ap.add_argument("--max-diff", type=float, default=fenv("DBS_MAX_PARITY_DIFF", 1.0e-5))
     ap.add_argument("--max-peak-mb", type=float, default=fenv("DBS_MAX_PEAK_CUDA_MB", 4096.0))
     args = ap.parse_args()
+    if args.max_cuda_vs_cpu_slowdown <= 0.0:
+        print("--max-cuda-vs-cpu-slowdown must be positive", file=sys.stderr)
+        return 2
+    if args.max_cuda_vs_torch_slowdown <= 0.0:
+        print("--max-cuda-vs-torch-slowdown must be positive", file=sys.stderr)
+        return 2
+    if args.min_large_cpu_speedup is not None and args.min_large_cpu_speedup <= 0.0:
+        print("--min-large-cpu-speedup must be positive", file=sys.stderr)
+        return 2
 
     path = Path(args.csv_path)
     if not path.exists():

@@ -5,14 +5,17 @@ import platform
 import subprocess
 import time
 from pathlib import Path
+
+os.environ.setdefault("DBS_ENABLE_SCORE_ONLY_FAST_PATH", "1")
+
 import torch
 from torch_dbs_extension import DBSOptions, final_scores
 
-os.environ.setdefault("DBS_ENABLE_SCORE_ONLY_FAST_PATH", "1")
 torch.manual_seed(1234)
 ROOT = Path(__file__).resolve().parents[1]
 RESULTS = ROOT / "benchmarks" / "results"
 RESULTS.mkdir(parents=True, exist_ok=True)
+VALIDATE_INPUTS = int(os.environ.get("DBS_BENCH_VALIDATE_INPUTS", "0"))
 
 
 def _run_text(cmd):
@@ -68,7 +71,7 @@ for B, T, K, V in shapes:
     x_cpu = torch.randn(B, T, K, V, dtype=torch.float32)
     x_cpu = torch.log_softmax(x_cpu, dim=-1)
     x_cuda = x_cpu.cuda()
-    opts = DBSOptions(beam_size=K, eos_token=-1)
+    opts = DBSOptions(beam_size=K, eos_token=-1, validate_inputs=VALIDATE_INPUTS)
     torch.cuda.reset_peak_memory_stats()
 
     cpu_out = torch.stack([final_scores(x_cpu[b], opts).detach() for b in range(B)], dim=0)
@@ -83,6 +86,7 @@ for B, T, K, V in shapes:
     peak_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
     rows.append({
         "B": B, "T": T, "K": K, "V": V,
+        "validate_inputs": VALIDATE_INPUTS,
         "dbs_cpu_ms": round(dbs_cpu_ms, 4),
         "dbs_cuda_ms": round(dbs_cuda_ms, 4),
         "torch_cuda_ms": round(torch_cuda_ms, 4),
@@ -109,6 +113,8 @@ metadata = {
     "torch": torch.__version__,
     "torch_cuda": torch.version.cuda,
     "cuda_device": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
+    "score_only_fast_path": os.environ.get("DBS_ENABLE_SCORE_ONLY_FAST_PATH"),
+    "validate_inputs": VALIDATE_INPUTS,
     "rows": len(rows),
     "csv": str(csv_path.relative_to(ROOT)),
 }

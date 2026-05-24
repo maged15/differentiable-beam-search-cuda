@@ -234,31 +234,47 @@ class _DBSFinalScores(torch.autograd.Function):
     @staticmethod
     def forward(ctx, log_probs: torch.Tensor, options: DBSOptions):
         input_was_unbatched = _validate_public_shape(log_probs, options)
+        needs_grad = bool(ctx.needs_input_grad[0])
         ctx.options = options
         ctx.input_dtype = log_probs.dtype
         ctx.was_cuda = log_probs.is_cuda
         ctx.input_was_unbatched = input_was_unbatched
+        ctx.needs_log_probs_grad = needs_grad
 
         # Native operators accumulate in fp32. Half/bfloat16 inputs are explicitly promoted.
         x = log_probs.detach().to(dtype=torch.float32).contiguous()
 
         if log_probs.is_cuda:
             x4 = x.unsqueeze(0) if input_was_unbatched else x
-            x4_cpu = x4.detach().cpu().contiguous()
-            ctx.save_for_backward(x4_cpu)
+            x4_cpu = None
+            if needs_grad:
+                # CUDA backward currently uses the CPU semantic implementation.
+                # Avoid the device-to-host copy for inference/parity calls that
+                # cannot request gradients.
+                x4_cpu = x4.detach().cpu().contiguous()
+                ctx.save_for_backward(x4_cpu)
+            else:
+                ctx.save_for_backward()
 
             if _native_cuda_forward_supported(options):
                 scores = _native_cuda_forward(x4, options)
             else:
+                if x4_cpu is None:
+                    x4_cpu = x4.detach().cpu().contiguous()
                 scores = _cpu_forward_batched(x4_cpu, options).to(device=log_probs.device)
             return scores.squeeze(0) if input_was_unbatched else scores
 
-        ctx.save_for_backward(x)
+        if needs_grad:
+            ctx.save_for_backward(x)
+        else:
+            ctx.save_for_backward()
         return _cpu_forward_batched(x, options)
 
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor):
         options: DBSOptions = ctx.options
+        if not ctx.needs_log_probs_grad:
+            return None, None
 
         if ctx.was_cuda:
             (x4_cpu,) = ctx.saved_tensors

@@ -25,6 +25,10 @@ python benchmarks/bench_compare.py --device cuda --repeats 5 --dbs-bench build/d
 
 The matrix includes vocabulary sizes 32k, 64k, and 128k. Do not summarize benchmark claims without the hardware, compiler, and dependency versions.
 
+For the direct CUDA benchmark, `DBS_BENCH_VALIDATE_INPUTS=0` is the default so
+the timing measures the decode hot path. Set `DBS_BENCH_VALIDATE_INPUTS=1` when
+you want to include the public API finite-value validation scan in the timing.
+
 ## Benchmark evidence
 
 Benchmark artifacts should live under `benchmarks/results/`. Useful evidence includes:
