@@ -141,7 +141,7 @@ python examples/benchmark_repro.py
 - TensorFlow and ONNX Runtime are not included.
 ## Versioning and ABI
  
-Package VERSION 1.0.0. C ABI version 10 (`DBS_ABI_VERSION`), aligned with the shared-library `SOVERSION`. Treat `DBS_ABI_VERSION` as the binary compatibility contract.
+Python package version: `1.0.0`. CMake library `VERSION`: `1.0.0`. Shared-library `SOVERSION` and C ABI version: `10` (`DBS_ABI_VERSION`).
  
 ## License
  
