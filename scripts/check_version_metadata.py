@@ -33,7 +33,7 @@ if not changelog_heading:
     errors.append('CHANGELOG.md must start with a current version heading')
 elif changelog_heading.group(1).strip() != version:
     errors.append(f'CHANGELOG.md current heading is {changelog_heading.group(1).strip()}, expected {version}')
-for rel in ["validation/v10_production_manifest.template.json", "validation/fixtures/cuda/golden_fixture_manifest.json"]:
+for rel in ["validation/fixtures/cuda/golden_fixture_manifest.json"]:
     text = (root / rel).read_text()
     for stale in re.findall(r'1\.0\.0rc\d+', text):
         if stale != version:

@@ -256,7 +256,7 @@ def test_cuda_variable_decode_initializes_ragged_trailing_outputs():
     assert torch.isfinite(scores_cpu[1]).all()
 
 
-@pytest.mark.skipif(os.environ.get("DBS_CUDA_LARGE_SCATTER_TEST") != "1", reason="large scatter grid-stride test is release-hardware gated")
+@pytest.mark.skipif(os.environ.get("DBS_CUDA_LARGE_SCATTER_TEST") != "1", reason="large scatter grid-stride test requires explicit hardware opt-in")
 def test_cuda_sparse_scatter_large_nnz_grid_stride():
     ext = _require_cuda_ext()
     grad_count = int(os.environ.get("DBS_CUDA_LARGE_SCATTER_GRAD_COUNT", "1024"))

@@ -9,7 +9,7 @@ Rules:
 - Memory ownership stays explicit: every result/backward/batch/workspace handle returned by the library has a matching free/destroy function.
 - Dense backward is never implicit; callers must opt in through `dbs_backward_dense()`.
 
-## v1.0 ABI gates
+## v1.0 ABI Checks
 
 `docs/abi/v1.0.symbols` is the exact exported-symbol manifest for this release. `docs/abi/v0.5.symbols` is used as the backwards-compatibility baseline.
 

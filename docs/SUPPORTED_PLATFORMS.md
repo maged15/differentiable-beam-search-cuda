@@ -1,6 +1,6 @@
 # Supported Platforms
 
-This repository is currently a release-candidate research library. The CPU C ABI is intended to build on Linux, macOS, and Windows. The CUDA/PyTorch extension is validated on Linux with NVIDIA CUDA and PyTorch matching the local build environment.
+This repository is a research library. The CPU C ABI is intended to build on Linux, macOS, and Windows. The CUDA/PyTorch extension is validated on Linux with NVIDIA CUDA and PyTorch matching the local build environment.
 
 ## Tier 1
 
@@ -13,6 +13,6 @@ This repository is currently a release-candidate research library. The CPU C ABI
 - macOS CPU library.
 - Linux ARM64/NEON CPU library when a self-hosted runner is available.
 
-## Release gates
+## Validation Artifacts
 
-A stable release requires the following artifacts: CPU and CUDA wheel logs, CUDA parity CSV, performance threshold report, sanitizer/fuzzer artifacts, soak-test JSON, ABI report, SBOM, checksums, and provenance attestation.
+Useful validation artifacts include CPU and CUDA wheel logs, CUDA parity CSVs, performance threshold reports, sanitizer/fuzzer artifacts, soak-test JSON, ABI reports, SBOMs, checksums, and provenance attestations. They are evidence for a specific environment, not a blanket production claim.

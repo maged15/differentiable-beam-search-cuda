@@ -19,3 +19,5 @@ DBS_MAX_PARITY_DIFF=1e-5 \
 DBS_MAX_PEAK_CUDA_MB=4096 \
 make cuda-validate
 ```
+
+These thresholds are benchmark alerts. They are not production certification.

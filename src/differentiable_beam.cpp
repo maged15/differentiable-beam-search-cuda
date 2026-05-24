@@ -191,7 +191,7 @@ struct DecodeConstraints {
     // Optional per-call minimum output length. Negative means use BeamOptions::min_length.
     int min_length = -1;
 
-    // Optional production constraints. Disabled when repetition_penalty <= 1 and no_repeat_ngram_size <= 0.
+    // Optional decode constraints. Disabled when repetition_penalty <= 1 and no_repeat_ngram_size <= 0.
     float repetition_penalty = 1.0f;
     int no_repeat_ngram_size = 0;
     TokenFilterFn token_filter = nullptr;
@@ -4102,31 +4102,15 @@ extern "C" DBS_EXPORT int dbs_result_summary_json(const DBSResultHandle* result,
 }
 
 extern "C" DBS_EXPORT int dbs_validate_production_gate_manifest(const char* manifest_json, char* out_error, int64_t out_error_capacity) {
-    auto write_error = [&](const char* msg) -> int {
-        if (out_error && out_error_capacity > 0) {
-            std::snprintf(out_error, static_cast<size_t>(out_error_capacity), "%s", msg);
-        }
-        return -1;
-    };
-    if (!manifest_json) return write_error("manifest_json is null");
-    const std::string m(manifest_json);
-    const char* required[] = {
-        "\"cuda_parity\":true",
-        "\"torch_wheel_cpu\":true",
-        "\"torch_wheel_cuda\":true",
-        "\"large_vocab_benchmarks\":true",
-        "\"sanitizers\":true",
-        "\"fuzzing\":true",
-        "\"abi_compatibility\":true",
-        "\"zero_allocation_hot_path\":true",
-        "\"mixed_precision_parity\":true",
-        "\"hardware_matrix\":true"
-    };
-    for (const char* needle : required) {
-        if (m.find(needle) == std::string::npos) return write_error(needle);
+    (void)manifest_json;
+    if (out_error && out_error_capacity > 0) {
+        std::snprintf(
+            out_error,
+            static_cast<size_t>(out_error_capacity),
+            "%s",
+            "deprecated: release evidence cannot be validated by the C ABI; run tests and attach raw benchmark/artifact logs");
     }
-    if (out_error && out_error_capacity > 0) out_error[0] = '\0';
-    return 0;
+    return -1;
 }
 
 extern "C" DBS_EXPORT int dbs_has_avx512() {
@@ -4188,6 +4172,9 @@ extern "C" DBS_EXPORT int dbs_get_stats_json(DBSDecoderHandle* handle, char* out
 }
 
 extern "C" DBS_EXPORT int dbs_is_deterministic() {
+    // Reports the implementation contract: hard decode uses deterministic
+    // score/raw-score/parent/token/length/from-logprob ordering and no RNG.
+    // This is not a runtime proof over arbitrary caller-provided inputs.
     return 1;
 }
 

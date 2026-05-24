@@ -1,6 +1,6 @@
-# Hardware validation artifacts
+# Hardware Validation Artifacts
 
-A production/stable release should attach CI-produced artifacts, not local screenshots:
+When publishing benchmark or hardware claims, attach CI-produced artifacts instead of screenshots:
 
 - CUDA wheel build log and clean-install test log
 - CUDA parity log for `[T,K,V]` and `[B,T,K,V]` public API shapes
@@ -12,4 +12,4 @@ A production/stable release should attach CI-produced artifacts, not local scree
 - soak-test JSON with peak memory and determinism results
 - CPU ISA benchmark logs for AVX-512, AVX2, scalar x86, and ARM64/NEON where supported
 
-Self-hosted jobs may be skipped in public CI. A release should not claim hardware validation for skipped jobs.
+Self-hosted jobs may be skipped in public CI. Do not claim hardware validation for skipped jobs.

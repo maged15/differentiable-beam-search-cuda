@@ -103,12 +103,12 @@ def main() -> int:
         failures.append("no large CUDA benchmark rows were found")
 
     if failures:
-        print("performance gate failed:", file=sys.stderr)
+        print("performance thresholds failed:", file=sys.stderr)
         for msg in failures:
             print(" - " + msg, file=sys.stderr)
         return 1
 
-    print(f"performance gate passed for {len(rows)} rows; large rows={large_rows}")
+    print(f"performance thresholds passed for {len(rows)} rows; large rows={large_rows}")
     return 0
 
 

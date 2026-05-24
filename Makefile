@@ -28,8 +28,8 @@ DBS_BUILD_HARDWARE_GATES ?= ON
 
 .PHONY: help all configure build test bench install clean distclean rebuild \
         debug release shared static cuda cuda-test asan tsan msan fuzzer \
-        abi abi-compat hardware-gate release-gate wheels cuda-wheels wheel-test cuda-wheel-test python-test package \
-        cuda-validate perf-gate soak long-fuzz release-artifacts
+        abi abi-compat hardware-validate wheels cuda-wheels wheel-test cuda-wheel-test python-test package \
+        cuda-validate perf-check soak long-fuzz release-artifacts
 
 help:
 	@printf '%s\n' \
@@ -50,7 +50,7 @@ help:
 	  '  make abi             Run exact ABI symbol check' \
 	  '  make abi-compat      Run ABI compatibility chain check' \
 	  '  make wheels          Build Python wheels via scripts/build_wheels.sh' \
-	  '  make release-gate    Run fail-closed production gate; requires full CI evidence' \
+	  '  make hardware-validate Run local CPU/CUDA validation and write benchmark metadata' \
 	  '  make cuda-validate  Build CUDA wheel, run parity, benchmark, and perf thresholds' \
 	  '  make soak           Run repeated decode/backward soak test' \
 	  '  make long-fuzz      Run longer sanitizer/fuzzer campaign with artifacts' \
@@ -123,11 +123,8 @@ abi: build
 abi-compat: build
 	$(CMAKE) --build $(BUILD_DIR) --target dbs_abi_compat_check
 
-hardware-gate: build
+hardware-validate: build
 	$(CMAKE) --build $(BUILD_DIR) --target dbs_hardware_validation
-
-release-gate: build
-	$(CMAKE) --build $(BUILD_DIR) --target dbs_release_gate
 
 wheels:
 	bash scripts/build_wheels.sh --no-isolation
@@ -156,7 +153,7 @@ cuda-validate:
 	python3 benchmarks/bench_dbs_cuda_direct.py
 	python3 scripts/check_perf_thresholds.py benchmarks/results/bench-dbs-cuda-direct.csv
 
-perf-gate:
+perf-check:
 	python3 scripts/check_perf_thresholds.py benchmarks/results/bench-dbs-cuda-direct.csv
 
 soak:

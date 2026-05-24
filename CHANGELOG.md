@@ -4,6 +4,9 @@
 
 - Promoted the package, CMake project, README, C ABI metadata checks, and validation fixtures to final `1.0.0`.
 - Removed root patch-note files; release history now lives here.
+- Removed approval workflow scaffolding and replaced it with raw validation logs, benchmark CSVs, and CI artifacts as the evidence model.
+- Retained `dbs_validate_production_gate_manifest` only as a deprecated ABI compatibility symbol that fails closed.
+- Replaced README release ceremony with measured CPU microbenchmark numbers and explicit baseline caveats.
 - Documented CUDA as hard-forward plus limited selected-path sparse surrogate backward for `beam_size <= 32`.
 - Made CUDA fast math opt-in for CMake and Python extension builds.
 - Fixed the AVX-512 exponential range-reduction constant used by sigmoid/softmax-style gradient helpers.
@@ -20,25 +23,22 @@
 - Corrected README C API backward/free ordering.
 - Reconfirmed MIT license text and explicit Python/CMake/C ABI version separation.
 - Added cooperative CUDA fast forward kernel API (`dbs_cuda_decode_forward_fast`) alongside the serial correctness CUDA kernel and sparse scatter kernel.
-- Added optional CUDA PyTorch extension source and CUDA/CPU parity pytest gate.
+- Added optional CUDA PyTorch extension source and CUDA/CPU parity pytest coverage.
 - Added allocator counters, deterministic seed recording APIs, and expanded JSON stats.
 - Added ABI symbol check, hardware validation script, fuzz campaign script, and package manifest.
 - Added CI hooks for hardware validation and sanitizer/fuzzer campaigns.
 - Added tests for allocator counters, deterministic seed recording, and JSON stats fields.
-- Updated docs to distinguish locally validated CPU features from hardware-dependent CUDA/SIMD validation gates.
+- Updated docs to distinguish locally validated CPU features from hardware-dependent CUDA/SIMD validation artifacts.
 - Added exported result observability APIs: EOS count, deterministic-order validation, and JSON result summaries.
-- Added production gate manifest validation API and required/template manifests.
-- Added fail-closed release gate script covering CPU tests, ABI exact/compat checks, wheels, CUDA parity, benchmarks, and fuzz/sanitizer campaigns.
 - Added ABI symbol manifests for v0.5 and v1.0 and backwards-compatible symbol checks.
-- Added FP16 decode, dense backward memory-cap, summary JSON, and gate-manifest tests.
-- Added fail-closed production approval gate requiring CI-produced evidence only.
+- Added FP16 decode, dense backward memory-cap, summary JSON, and validation tests.
 - Added independent review attestations for API/ABI, security, numerical correctness, performance, and ML integration.
 - Added mandatory release artifacts for signed wheels/libraries, SBOM, provenance, vulnerability/license scans, CUDA raw logs, fuzz/sanitizer artifacts, and soak/SLO artifacts.
-- Added frozen supported platform matrix lock and canary/rollback guidance.
+- Added frozen supported platform matrix lock.
 
 ## 1.0.0rc1
 
-- Added `make cuda-validate`, `make soak`, `make long-fuzz`, `make perf-gate`, and `make release-artifacts`.
+- Added `make cuda-validate`, `make soak`, `make long-fuzz`, benchmark checks, and `make release-artifacts`.
 - Added CUDA scheduled/self-hosted benchmark workflow.
 - Added fuzz/soak workflow and release artifact workflow.
 - Added performance threshold validation for CUDA parity and speed regressions.

@@ -6,7 +6,7 @@ The CUDA backend is correctness-first. Native cooperative CUDA forward currently
 
 The CUDA PyTorch extension can use ATen CUDA `topk` for the common no-EOS fast path when `DBS_ENABLE_SCORE_ONLY_FAST_PATH=1` is set. This gives strong practical performance and parity for score-only workloads, but it is not a single fused custom kernel.
 
-Production readiness still requires long fuzz/soak validation, multi-platform CI evidence, signed artifacts, SBOM publication, and performance thresholds on the deployment hardware.
+Hardware claims still require long fuzz/soak validation, multi-platform CI evidence, signed artifacts, SBOM publication, and performance thresholds on the target hardware.
 
 
 ## CUDA fast path semantics

@@ -10,4 +10,4 @@ Before tagging a release:
 4. Publish benchmark CSVs with compiler, CPU/GPU model, OS, and library versions.
 5. Update `VERSION`, `CHANGELOG.md`, `IMPLEMENTATION_STATUS.md`, and migration notes.
 
-A release is not production-certified unless the hardware gates have actually run and artifacts from those runs are attached.
+This project does not claim production certification. Release notes should link the raw validation logs and benchmark CSVs that were actually run.

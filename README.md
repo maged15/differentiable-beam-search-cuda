@@ -13,6 +13,7 @@ This is research code, not a production library. Use it to experiment, not to sh
 - Sparse surrogate gradients via selected-beam softmax + relaxed-pool sigmoid weights
 - PyTorch extension with autograd support for CPU and CUDA tensors
 - Optional JAX wrapper (host callback, CPU only — not for XLA deployment)
+
 The forward selection is discrete and not actually differentiable. The "differentiable" part is the surrogate gradient defined over the selected trace and a relaxed pool, similar in spirit to Gumbel-softmax tricks but specialized for beam search. These gradients work for training experiments but are not exact derivatives of top-k.
  
 ## Build
@@ -103,16 +104,14 @@ Dense backward is gated by `max_dense_gradient_elements` and explicit (`dbs_back
  
 ## Benchmarks
  
-Measured locally on **AMD Ryzen 7 7800X3D + RTX 4080 SUPER**, Release build, 5 repeats:
- 
+CPU microbenchmark from this checkout, Release build, 20 repeats. The selected kernel reported `avx512`; do not generalize these numbers to AVX2-only CPUs or to GPU serving workloads. No Hugging Face or `transformers.generate()` speedup claim is published until a baseline CSV is checked in with environment metadata.
+
 | T  | K | V     | B | fwd (µs) | sparse bwd (µs) |
 | -- | - | ----- | - | -------- | --------------- |
-| 4  | 2 | 32000 | 1 |          |                 |
-| 4  | 4 | 32000 | 4 |          |                 |
-| 8  | 8 | 32000 | 1 |          |                 |
-| 16 | 8 | 32000 | 1 |          |                 |
- 
-(Fill in once you re-run `./build/dbs_bench 10` and capture the numbers.)
+| 4  | 2 | 32000 | 1 | 33       | 0               |
+| 4  | 4 | 32000 | 4 | 68       | 0               |
+| 8  | 8 | 32000 | 1 | 375      | 1               |
+| 16 | 8 | 32000 | 1 | 846      | 2               |
  
 ```bash
 ./build/dbs_bench 10                       # full matrix
@@ -137,7 +136,8 @@ python examples/benchmark_repro.py
 - ROCm is not supported.
 - CUDA backward uses CPU-equivalent semantics; native CUDA sparse backward is a limited utility, not the primary path.
 - Model-step decoding recomputes partial prefixes; a fused incremental decoder would be needed for high-throughput serving.
-- No NUMA-aware scheduling, no hardware counter profiling, no production sanitizer/fuzz campaigns. If you need those, this isn't the library yet.
+- No NUMA-aware scheduling or hardware-counter profiling.
+- No checked-in Hugging Face/PyTorch generation baseline yet, so performance claims should be treated as unproven outside the included microbenchmarks.
 - TensorFlow and ONNX Runtime are not included.
 ## Versioning and ABI
  

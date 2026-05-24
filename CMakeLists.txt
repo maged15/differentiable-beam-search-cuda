@@ -186,8 +186,5 @@ if(DBS_BUILD_HARDWARE_GATES)
     COMMENT "Checking backwards-compatible dbs_* ABI symbols")
   add_custom_target(dbs_hardware_validation
     COMMAND ${CMAKE_COMMAND} -E env DBS_REQUIRE_CUDA=0 bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_hardware_validation.sh
-    COMMENT "Running CPU/CUDA hardware validation gate")
-  add_custom_target(dbs_release_gate
-    COMMAND ${CMAKE_COMMAND} -E env DBS_REQUIRE_CUDA=1 DBS_REQUIRE_TORCH=1 DBS_REQUIRE_LONG_FUZZ=1 bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_release_gate.sh
-    COMMENT "Running fail-closed production release gate")
+    COMMENT "Running CPU/CUDA hardware validation")
 endif()

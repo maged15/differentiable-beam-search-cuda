@@ -395,7 +395,7 @@ static void test_extreme_logits_stable() {
     dbs_destroy(h);
 }
 
-static void test_stats_json_and_determinism() {
+static void test_stats_json_and_determinism_contract() {
     auto* h = make_decoder();
     assert(dbs_is_deterministic() == 1);
     char buf[1024];
@@ -512,13 +512,11 @@ static void test_result_summary_and_ordering_api() {
     dbs_destroy(h);
 }
 
-static void test_production_gate_manifest_validation() {
+static void test_deprecated_production_manifest_api_fails_closed() {
     char err[256];
-    const char* ok = "{\"cuda_parity\":true,\"torch_wheel_cpu\":true,\"torch_wheel_cuda\":true,\"large_vocab_benchmarks\":true,\"sanitizers\":true,\"fuzzing\":true,\"abi_compatibility\":true,\"zero_allocation_hot_path\":true,\"mixed_precision_parity\":true,\"hardware_matrix\":true}";
-    assert(dbs_validate_production_gate_manifest(ok, err, sizeof(err)) == 0);
-    const char* bad = "{\"cuda_parity\":false}";
-    assert(dbs_validate_production_gate_manifest(bad, err, sizeof(err)) != 0);
-    assert(std::strlen(err) > 0);
+    const char* manifest = "{\"cuda_parity\":true}";
+    assert(dbs_validate_production_gate_manifest(manifest, err, sizeof(err)) != 0);
+    assert(std::strstr(err, "deprecated") != nullptr);
 }
 
 int main() {
@@ -541,12 +539,12 @@ int main() {
     test_forced_token_sequence_overrides_scores();
     test_workspace_reuse_no_growth();
     test_extreme_logits_stable();
-    test_stats_json_and_determinism();
+    test_stats_json_and_determinism_contract();
     test_golden_output();
     test_allocator_counters_and_seed();
     test_dense_backward_memory_cap_fails_closed();
     test_result_summary_and_ordering_api();
-    test_production_gate_manifest_validation();
+    test_deprecated_production_manifest_api_fails_closed();
     std::cout << "dbs_tests passed\n";
     return 0;
 }

@@ -11,4 +11,4 @@ The Python wrapper normalizes unbatched CUDA inputs to the native rank-4 kernel 
 
 The exact CUDA kernel uses `c10::cuda::CUDAGuard` and PyTorch's current CUDA stream. Set `DBS_CUDA_SYNC_CHECK=1` or `DBS_CUDA_DEBUG_SYNC=1` during validation to synchronize after launches and surface asynchronous device failures at the call site.
 
-Public GitHub-hosted CI does not provide an NVIDIA GPU. CUDA parity is therefore required on self-hosted CUDA runners before stable release, even if hosted CPU CI is green.
+Public GitHub-hosted CI does not provide an NVIDIA GPU. CUDA parity is therefore required on self-hosted CUDA runners before publishing CUDA performance or hardware-support claims, even if hosted CPU CI is green.

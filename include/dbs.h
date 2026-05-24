@@ -299,7 +299,7 @@ DBS_EXPORT int64_t dbs_backward_grad_initial_scores_count(const DBSResultHandle*
 DBS_EXPORT int64_t dbs_result_eos_count(const DBSResultHandle* result, int eos_token);
 DBS_EXPORT int dbs_result_validate_deterministic_order(const DBSResultHandle* result);
 DBS_EXPORT int dbs_result_summary_json(const DBSResultHandle* result, int eos_token, char* out_json, int64_t out_json_capacity);
-DBS_EXPORT int dbs_validate_production_gate_manifest(const char* manifest_json, char* out_error, int64_t out_error_capacity);
+DBS_EXPORT int dbs_validate_production_gate_manifest(const char* manifest_json, char* out_error, int64_t out_error_capacity); /* deprecated compatibility stub; always returns non-zero */
 
 DBS_EXPORT int dbs_has_avx512(void);
 DBS_EXPORT int dbs_has_avx2(void);
@@ -308,7 +308,7 @@ DBS_EXPORT int dbs_has_neon(void);
 DBS_EXPORT const char* dbs_selected_kernel_name(void);
 DBS_EXPORT int dbs_get_stats(DBSDecoderHandle* handle, DBSStatsC* out_stats);
 DBS_EXPORT int dbs_get_stats_json(DBSDecoderHandle* handle, char* out_json, int64_t out_json_capacity);
-DBS_EXPORT int dbs_is_deterministic(void);
+DBS_EXPORT int dbs_is_deterministic(void); /* reports deterministic hard-decode contract; not a runtime proof */
 DBS_EXPORT int dbs_set_deterministic_seed(DBSDecoderHandle* handle, uint64_t seed);
 DBS_EXPORT uint64_t dbs_get_deterministic_seed(DBSDecoderHandle* handle);
 DBS_EXPORT void dbs_allocator_counters_reset(void);

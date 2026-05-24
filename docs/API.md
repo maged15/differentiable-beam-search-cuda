@@ -20,7 +20,7 @@
 
 ## Constraints
 
-`dbs_decode_constrained_ex()` supports banned tokens, forced tokens, min length, repetition penalty, no-repeat n-gram, and a token filter callback. Grammar, regex, lexicon, and prefix-automaton constraints should be implemented behind the token filter callback in production integrations.
+`dbs_decode_constrained_ex()` supports banned tokens, forced tokens, min length, repetition penalty, no-repeat n-gram, and a token filter callback. Grammar, regex, lexicon, and prefix-automaton constraints can be implemented behind the token filter callback in downstream integrations.
 
 ## Observability
 
@@ -38,7 +38,7 @@
 
 Public PyTorch CUDA `final_scores()` uses native CUDA forward only for the supported fast hard-forward cases. Larger beams and CPU-only shaping options use CPU-equivalent semantic fallback and return CUDA tensors/gradients. Direct CUDA C sparse-backward helpers are limited selected-path utilities. Run `python/tests/test_cuda_parity.py` and `python/tests/test_cuda_backward.py` on NVIDIA hardware before enabling CUDA in any training or inference path.
 
-## v1.0 observability and gate APIs
+## v1.0 observability APIs
 
 `dbs_result_eos_count(result, eos_token)` counts selected EOS tokens in a decode result.
 
@@ -46,8 +46,7 @@ Public PyTorch CUDA `final_scores()` uses native CUDA forward only for the suppo
 
 `dbs_result_summary_json(result, eos_token, buffer, capacity)` writes a compact JSON summary with selected count, relaxed pool count, EOS count, min/max lengths, final-score range, and deterministic-order status.
 
-`dbs_validate_production_gate_manifest(manifest_json, error_buffer, capacity)` validates that a release manifest has all required production gates set to true. This is a fail-closed API: missing or false gates return non-zero.
-
+`dbs_validate_production_gate_manifest(manifest_json, error_buffer, capacity)` is retained only as a deprecated ABI compatibility symbol. It always returns non-zero because production evidence cannot be validated inside the C ABI. Use raw test logs, benchmark CSVs, and CI artifacts instead.
 
 ## PyTorch public tensor API
 

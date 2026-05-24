@@ -7,7 +7,7 @@ on:
 
 jobs:
   cuda-validate:
-    name: CUDA parity and benchmark gate
+    name: CUDA parity and benchmark validation
     if: ${{ vars.DBS_ENABLE_SELF_HOSTED_CUDA == '1' }}
     runs-on: [self-hosted, linux, x64, cuda]
     timeout-minutes: 120
@@ -40,4 +40,4 @@ jobs:
     if: ${{ vars.DBS_ENABLE_SELF_HOSTED_CUDA != '1' }}
     runs-on: ubuntu-latest
     steps:
-      - run: echo 'Set repository variable DBS_ENABLE_SELF_HOSTED_CUDA=1 and attach a self-hosted CUDA runner to enable this gate.'
+      - run: echo 'Set repository variable DBS_ENABLE_SELF_HOSTED_CUDA=1 and attach a self-hosted CUDA runner to enable this validation job.'
