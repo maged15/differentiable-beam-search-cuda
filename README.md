@@ -141,6 +141,10 @@ python examples/benchmark_repro.py
 - No NUMA-aware scheduling, no hardware counter profiling, no production sanitizer/fuzz campaigns. If you need those, this isn't the library yet.
 - TensorFlow and ONNX Runtime are not included.
 
+## Versioning and ABI
+
+Package version: **1.0.0**. C ABI version: **10** (`DBS_ABI_VERSION`), aligned with the shared-library `SOVERSION`. Treat `DBS_ABI_VERSION` as the binary compatibility contract.
+
 ## License
 
 MIT. See [`LICENSE`](LICENSE).
